@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 
@@ -32,9 +32,9 @@ export function verifyAccessToken(token: string, secret: string): AccessClaims {
   const [encodedHeader, encodedPayload, signature] = parts;
   const input = `${encodedHeader}.${encodedPayload}`;
   const expected = createHmac('sha256', secret).update(input).digest('base64url');
-  const actualBytes = Buffer.from(signature, 'base64url');
-  const expectedBytes = Buffer.from(expected, 'base64url');
-  if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) throw httpError(401, 'INVALID_ACCESS_TOKEN', 'Invalid access token');
+  const actual = createHmac('sha256', 'access-token-compare').update(signature).digest('hex');
+  const expectedComparable = createHmac('sha256', 'access-token-compare').update(expected).digest('hex');
+  if (actual !== expectedComparable) throw httpError(401, 'INVALID_ACCESS_TOKEN', 'Invalid access token');
   try {
     const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as Partial<AccessClaims>;
     if (typeof payload.sub !== 'string' || typeof payload.appId !== 'string' || typeof payload.sid !== 'string' || typeof payload.exp !== 'number' || payload.exp <= Math.floor(Date.now() / 1000)) throw new Error();
