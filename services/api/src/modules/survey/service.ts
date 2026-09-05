@@ -3,58 +3,16 @@ import type { PrismaClient } from '@prisma/client';
 import type { RedisConnection } from '../../core/redis.js';
 import { RewardEngine } from '../rewards/engine.js';
 import { providerError, withProviderTimeout, type SurveyCallbackEvent, type SurveyProvider } from './provider.js';
-
 const SECRET = process.env.SURVEY_PROVIDER_SECRET?.trim() || '';
-
 export class HmacSurveyProvider implements SurveyProvider {
   readonly name = 'generic';
-  async verifyCallback(input: { headers: Record<string, string | undefined>; rawBody: string }): Promise<boolean> {
-    const signature = input.headers['x-provider-signature'] || input.headers['x-signature'];
-    if (!SECRET || !signature) return false;
-    const expected = createHmac('sha256', SECRET).update(input.rawBody).digest('hex');
-    const a = Buffer.from(signature, 'hex'); const b = Buffer.from(expected, 'hex');
-    return a.length === b.length && timingSafeEqual(a, b);
-  }
-  async normalizeCallback(input: unknown): Promise<SurveyCallbackEvent> {
-    const v = input as Record<string, unknown>;
-    const eventId = text(v.eventId ?? v.event_id); const userId = text(v.userId ?? v.user_id); const appId = text(v.appId ?? v.app_id); const surveyExternalId = text(v.surveyExternalId ?? v.survey_id ?? v.surveyId);
-    if (!eventId || !userId || !appId || !surveyExternalId) throw providerError('INVALID_CALLBACK', 'Provider callback is missing required identifiers', 400);
-    return { provider: this.name, eventId, userId, appId, surveyExternalId, rewardAmount: v.rewardAmount as SurveyCallbackEvent['rewardAmount'], status: text(v.status), payload: v };
-  }
+  async verifyCallback(input: { headers: Record<string, string | undefined>; rawBody: string }): Promise<boolean> { const signature = input.headers['x-provider-signature'] || input.headers['x-signature']; if (!SECRET || !signature) return false; const expected = createHmac('sha256', SECRET).update(input.rawBody).digest('hex'); const a = new TextEncoder().encode(signature); const b = new TextEncoder().encode(expected); return a.length === b.length && timingSafeEqual(a, b); }
+  async normalizeCallback(input: unknown): Promise<SurveyCallbackEvent> { const v = input as Record<string, unknown>; const eventId = text(v.eventId ?? v.event_id); const userId = text(v.userId ?? v.user_id); const appId = text(v.appId ?? v.app_id); const surveyExternalId = text(v.surveyExternalId ?? v.survey_id ?? v.surveyId); if (!eventId || !userId || !appId || !surveyExternalId) throw providerError('INVALID_CALLBACK', 'Provider callback is missing required identifiers', 400); const result: SurveyCallbackEvent = { provider: this.name, eventId, userId, appId, surveyExternalId, payload: v }; const rewardAmount = v.rewardAmount as SurveyCallbackEvent['rewardAmount'] | undefined; const status = text(v.status); if (rewardAmount !== undefined) result.rewardAmount = rewardAmount; if (status) result.status = status; return result; }
 }
-
 export class SurveyService {
   private readonly rewards: RewardEngine;
   constructor(private readonly db: PrismaClient, private readonly redis: RedisConnection, private readonly provider: SurveyProvider = new HmacSurveyProvider()) { this.rewards = new RewardEngine(db, redis); }
-
-  async callback(headers: Record<string, string | undefined>, rawBody: string, body: unknown) {
-    const verified = await withProviderTimeout(this.provider.verifyCallback({ headers, rawBody }));
-    if (!verified) throw providerError('INVALID_PROVIDER_CALLBACK', 'Provider callback signature is invalid', 401);
-    const event = await withProviderTimeout(this.provider.normalizeCallback(body));
-    const rate = await this.redis.incrementWithExpiry(`provider:survey:rate:${event.appId}`, 60);
-    if (rate > 60) throw providerError('PROVIDER_RATE_LIMITED', 'Provider callback rate limit exceeded', 429);
-    const rawHash = createHash('sha256').update(rawBody).digest('hex');
-    await this.redis.set(`provider:survey:event:${event.eventId}`, JSON.stringify({ receivedAt: new Date().toISOString(), rawHash, payload: redact(event.payload) }), 7 * 24 * 60 * 60);
-    const existing = await this.db.surveyCompletions.findFirst({ where: { appId: event.appId, survey: { externalId: event.surveyExternalId, provider: event.provider }, externalEventId: event.eventId } });
-    if (existing) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    if ((event.status || '').toUpperCase() !== 'COMPLETED') return { status: 'IGNORED', eventId: event.eventId, replayed: false };
-    const survey = await this.db.surveys.findFirst({ where: { appId: event.appId, provider: event.provider, externalId: event.surveyExternalId, status: 'ACTIVE' } });
-    if (!survey || survey.rewardAmount <= 0n) throw providerError('REWARD_NOT_AVAILABLE', 'Survey reward is not available', 404);
-    const sessionId = text(event.payload.sessionId);
-    if (!sessionId) throw providerError('SESSION_REQUIRED', 'Provider callback must include a valid sessionId', 400);
-    const idempotencyKey = `survey:${event.provider}:${event.eventId}`;
-    const existingKey = await this.db.surveyCompletions.findUnique({ where: { idempotencyKey } });
-    if (existingKey) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    const reward = await this.rewards.grant({ userId: event.userId, appId: event.appId, sessionId, sourceType: 'survey', sourceId: survey.id, idempotencyKey, metadata: { provider: event.provider, eventId: event.eventId, rawHash } });
-    try {
-      await this.db.surveyCompletions.create({ data: { appId: event.appId, userId: event.userId, surveyId: survey.id, externalEventId: event.eventId, rewardAmount: reward.amount, status: 'CONFIRMED', idempotencyKey } });
-    } catch (error) {
-      const duplicate = await this.db.surveyCompletions.findUnique({ where: { idempotencyKey } });
-      if (!duplicate) throw error;
-      return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    }
-    return { status: 'CONFIRMED', eventId: event.eventId, replayed: reward.replayed, reward };
-  }
+  async callback(headers: Record<string, string | undefined>, rawBody: string, body: unknown) { const verified = await withProviderTimeout(this.provider.verifyCallback({ headers, rawBody })); if (!verified) throw providerError('INVALID_PROVIDER_CALLBACK', 'Provider callback signature is invalid', 401); const event = await withProviderTimeout(this.provider.normalizeCallback(body)); const rate = await this.redis.incrementWithExpiry(`provider:survey:rate:${event.appId}`, 60); if (rate > 60) throw providerError('PROVIDER_RATE_LIMITED', 'Provider callback rate limit exceeded', 429); const rawHash = createHash('sha256').update(rawBody).digest('hex'); await this.redis.set(`provider:survey:event:${event.eventId}`, JSON.stringify({ receivedAt: new Date().toISOString(), rawHash, payload: redact(event.payload) }), 7 * 24 * 60 * 60); const existing = await this.db.surveyCompletions.findFirst({ where: { appId: event.appId, survey: { externalId: event.surveyExternalId, provider: event.provider }, externalEventId: event.eventId } }); if (existing) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; if ((event.status || '').toUpperCase() !== 'COMPLETED') return { status: 'IGNORED', eventId: event.eventId, replayed: false }; const survey = await this.db.surveys.findFirst({ where: { appId: event.appId, provider: event.provider, externalId: event.surveyExternalId, status: 'ACTIVE' } }); if (!survey || survey.rewardAmount <= 0n) throw providerError('REWARD_NOT_AVAILABLE', 'Survey reward is not available', 404); const sessionId = text(event.payload.sessionId); if (!sessionId) throw providerError('SESSION_REQUIRED', 'Provider callback must include a valid sessionId', 400); const idempotencyKey = `survey:${event.provider}:${event.eventId}`; const existingKey = await this.db.surveyCompletions.findUnique({ where: { idempotencyKey } }); if (existingKey) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; const reward = await this.rewards.grant({ userId: event.userId, appId: event.appId, sessionId, sourceType: 'survey', sourceId: survey.id, idempotencyKey, metadata: { provider: event.provider, eventId: event.eventId, rawHash } }); try { await this.db.surveyCompletions.create({ data: { appId: event.appId, userId: event.userId, surveyId: survey.id, externalEventId: event.eventId, rewardAmount: reward.amount, status: 'CONFIRMED', idempotencyKey } }); } catch (error) { const duplicate = await this.db.surveyCompletions.findUnique({ where: { idempotencyKey } }); if (!duplicate) throw error; return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; } return { status: 'CONFIRMED', eventId: event.eventId, replayed: reward.replayed, reward }; }
 }
 function text(v: unknown): string | undefined { return typeof v === 'string' && v.trim() ? v.trim() : undefined; }
 function redact(v: unknown): unknown { if (Array.isArray(v)) return v.map(redact); if (!v || typeof v !== 'object') return v; const out: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v as Record<string, unknown>)) { const sensitive = /token|secret|signature|authorization|password|api[_-]?key/i.test(k); out[k] = sensitive ? '[REDACTED]' : redact(x); } return out; }
