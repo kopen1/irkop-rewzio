@@ -6,16 +6,22 @@ on:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
   pull_request:
     paths:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
 
 permissions:
   contents: write
+
+concurrency:
+  group: rewzio-ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   prisma:
@@ -37,12 +43,20 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rewzio
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm install
+          package-manager-cache: false
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
       - run: npm --workspace @rewzio/api run db:generate
       - run: npm --workspace @rewzio/api run db:validate
       - name: Generate initial migration when absent
@@ -70,5 +84,6 @@ jobs:
             echo "PASS: migration already committed"
           else
             git commit -m "feat(db): add initial Prisma migration"
+            git pull --rebase origin master
             git push
           fi
