@@ -53,6 +53,7 @@ jobs:
           if [ ! -f "$dir/migration.sql" ]; then
             mkdir -p "$dir"
             npx --workspace @rewzio/api prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > "$dir/migration.sql"
+            cat services/api/prisma/migrations/constraints.sql >> "$dir/migration.sql"
             printf 'provider = "postgresql"\n' > services/api/prisma/migrations/migration_lock.toml
           fi
       - run: npm --workspace @rewzio/api run db:migrate:deploy
