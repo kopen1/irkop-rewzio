@@ -9,10 +9,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: rewzio-ci-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   node:
     runs-on: ubuntu-latest
@@ -50,6 +46,13 @@ jobs:
             echo 'PASS: package-lock.json already committed'
           else
             git commit -m 'chore(ci): add npm lockfile'
-            git pull --rebase origin master
-            git push
+            for attempt in 1 2 3; do
+              if git pull --rebase origin master && git push; then
+                exit 0
+              fi
+              echo "WARN: push attempt $attempt failed; retrying"
+              sleep 2
+            done
+            echo 'ERROR: unable to push generated package-lock.json'
+            exit 1
           fi
