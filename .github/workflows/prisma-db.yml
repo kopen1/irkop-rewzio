@@ -15,7 +15,7 @@ on:
       - '.github/workflows/prisma-db.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   prisma:
@@ -53,38 +53,14 @@ jobs:
           fi
       - run: npm --workspace @rewzio/api run db:generate
       - run: npm --workspace @rewzio/api run db:validate
-      - name: Generate initial migration when absent
+      - name: Test database against current Prisma schema
         shell: bash
         run: |
           set -euo pipefail
-          dir="services/api/prisma/migrations/0001_init"
-          if [ ! -f "$dir/migration.sql" ]; then
-            mkdir -p "$dir"
-            npx --workspace @rewzio/api prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > "$dir/migration.sql"
-            cat services/api/prisma/migrations/constraints.sql >> "$dir/migration.sql"
-            printf 'provider = "postgresql"\n' > services/api/prisma/migrations/migration_lock.toml
-          fi
-      - run: npm --workspace @rewzio/api run db:migrate:deploy
-      - run: npm --workspace @rewzio/api run db:seed
-      - name: Commit generated migration
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add services/api/prisma/migrations
-          if git diff --cached --quiet; then
-            echo "PASS: migration already committed"
+          if find services/api/prisma/migrations -mindepth 2 -name migration.sql -print -quit | grep -q .; then
+            npm --workspace @rewzio/api run db:migrate:deploy
           else
-            git commit -m "feat(db): add initial Prisma migration"
-            for attempt in 1 2 3; do
-              if git pull --rebase origin master && git push; then
-                exit 0
-              fi
-              echo "WARN: push attempt $attempt failed; retrying"
-              sleep 2
-            done
-            echo "ERROR: unable to push generated migration"
-            exit 1
+            echo 'INFO: no committed Prisma migration found; using db push only against temporary CI PostgreSQL'
+            npm --workspace @rewzio/api exec -- prisma db push --skip-generate
           fi
+      - run: npm --workspace @rewzio/api run db:seed
