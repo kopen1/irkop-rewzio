@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RedisConnection } from '../../core/redis.js';
 import { CoinLedgerService } from '../coins/service.js';
+import { FraudRiskEngine } from '../fraud/service.js';
 
 export const REWARD_SOURCES = ['daily_checkin','mission','watch','ads','survey','offerwall','referral','lucky_reward','spin','quiz','game','sponsor','affiliate'] as const;
 export type RewardSource = typeof REWARD_SOURCES[number];
@@ -12,7 +13,8 @@ interface RewardHooks { integrity?: (input: RewardRequest, device: { id: string;
 
 export class RewardEngine {
   private readonly coins: CoinLedgerService;
-  constructor(private readonly db: PrismaClient, private readonly redis: RedisConnection, private readonly hooks: RewardHooks = {}) { this.coins = new CoinLedgerService(db); }
+  private readonly fraud: FraudRiskEngine;
+  constructor(private readonly db: PrismaClient, private readonly redis: RedisConnection, private readonly hooks: RewardHooks = {}) { this.coins = new CoinLedgerService(db); this.fraud = new FraudRiskEngine(db, redis); }
 
   async grant(input: RewardRequest): Promise<RewardResult> {
     validateRequest(input);
@@ -37,9 +39,9 @@ export class RewardEngine {
     if (!session.deviceId) throw rewardError('DEVICE_REQUIRED', 'An active device is required for rewards', 403);
     const device = await this.db.userDevices.findUnique({ where: { id: session.deviceId } });
     if (!device || device.userId !== input.userId || device.appId !== input.appId || device.status !== 'ACTIVE') throw rewardError('DEVICE_INVALID', 'Device is not eligible for rewards', 403);
-    if (device.integrityStatus === 'FAILED' || device.integrityStatus === 'UNSUPPORTED') throw rewardError('INTEGRITY_FAILED', 'Device integrity check failed', 403);
+    if (device.integrityStatus === 'FAILED') throw rewardError('INTEGRITY_FAILED', 'Device integrity check failed', 403);
     await this.hooks.integrity?.(input, device);
-    if (device.riskScore >= 80) throw rewardError('FRAUD_REJECTED', 'Reward request rejected by fraud controls', 403);
+    const assessment = await this.fraud.enforceReward({ appId: input.appId, userId: input.userId, sessionId: input.sessionId, deviceId: device.id, ipAddress: session.ipAddress ?? undefined, sourceType: input.sourceType, sourceId: input.sourceId, integrityStatus: device.integrityStatus });
     await this.hooks.fraud?.(input, device);
 
     const reward = await this.db.rewards.findFirst({ where: { appId: input.appId, sourceType: input.sourceType, sourceId: input.sourceId ?? null, status: 'CONFIRMED' }, orderBy: { createdAt: 'desc' } });
@@ -56,7 +58,7 @@ export class RewardEngine {
       const ledgerResult = await this.coins.createLedgerEntryInTransaction(tx, {
         userId: input.userId, appId: input.appId, transactionType: 'REWARD_CREDIT', source: input.sourceType,
         amount: reward.amount, referenceId: redemption.id, status: 'CONFIRMED',
-        metadata: { rewardId: reward.id, redemptionId: redemption.id, sourceId: input.sourceId ?? null, requestHash: hashRequest(input), clientAmountIgnored: true, ...(input.metadata === undefined ? {} : { context: input.metadata }) },
+        metadata: { rewardId: reward.id, redemptionId: redemption.id, sourceId: input.sourceId ?? null, requestHash: hashRequest(input), clientAmountIgnored: true, riskScore: assessment.score, riskLevel: assessment.level, ...(input.metadata === undefined ? {} : { context: input.metadata }) },
         idempotencyKey: `reward:${redemption.id}`,
       });
       await tx.rewardRedemptions.update({ where: { id: redemption.id }, data: { status: 'CONFIRMED' } });
