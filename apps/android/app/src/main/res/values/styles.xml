@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.Rewzio" parent="android:style/Theme.Material.Light.NoActionBar" />
+</resources>
