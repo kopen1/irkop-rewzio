@@ -1,0 +1,52 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { FastifyRequest } from 'fastify';
+import type { PrismaClient } from '@prisma/client';
+
+export interface AccessClaims {
+  sub: string;
+  appId: string;
+  sid: string;
+  exp: number;
+}
+
+export async function authenticateUser(
+  request: FastifyRequest,
+  db: PrismaClient,
+  secret: string,
+): Promise<AccessClaims> {
+  const header = request.headers.authorization;
+  if (!header?.startsWith('Bearer ')) throw httpError(401, 'AUTH_REQUIRED', 'Authentication required');
+  const token = header.slice(7).trim();
+  const claims = verifyAccessToken(token, secret);
+  const session = await db.userSessions.findUnique({ where: { id: claims.sid } });
+  if (!session || session.userId !== claims.sub || session.appId !== claims.appId || session.status !== 'ACTIVE' || session.expiresAt.getTime() <= Date.now()) {
+    throw httpError(401, 'SESSION_INVALID', 'Session is invalid or expired');
+  }
+  await db.userSessions.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } });
+  return claims;
+}
+
+export function verifyAccessToken(token: string, secret: string): AccessClaims {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw httpError(401, 'INVALID_ACCESS_TOKEN', 'Invalid access token');
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const input = `${encodedHeader}.${encodedPayload}`;
+  const expected = createHmac('sha256', secret).update(input).digest('base64url');
+  const actualBytes = Buffer.from(signature, 'base64url');
+  const expectedBytes = Buffer.from(expected, 'base64url');
+  if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) throw httpError(401, 'INVALID_ACCESS_TOKEN', 'Invalid access token');
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as Partial<AccessClaims>;
+    if (typeof payload.sub !== 'string' || typeof payload.appId !== 'string' || typeof payload.sid !== 'string' || typeof payload.exp !== 'number' || payload.exp <= Math.floor(Date.now() / 1000)) throw new Error();
+    return { sub: payload.sub, appId: payload.appId, sid: payload.sid, exp: payload.exp };
+  } catch {
+    throw httpError(401, 'INVALID_ACCESS_TOKEN', 'Invalid access token');
+  }
+}
+
+function httpError(statusCode: number, code: string, message: string): Error & { statusCode: number; code: string } {
+  const error = new Error(message) as Error & { statusCode: number; code: string };
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
