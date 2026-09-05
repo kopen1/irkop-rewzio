@@ -3,60 +3,16 @@ import type { PrismaClient } from '@prisma/client';
 import type { RedisConnection } from '../../core/redis.js';
 import { RewardEngine } from '../rewards/engine.js';
 import { providerError, withProviderTimeout, type OfferwallCallbackEvent, type OfferwallProvider } from './provider.js';
-
 const SECRET = process.env.OFFERWALL_PROVIDER_SECRET?.trim() || '';
-
 export class HmacOfferwallProvider implements OfferwallProvider {
   readonly name = 'generic';
-  async verifyCallback(input: { headers: Record<string, string | undefined>; rawBody: string }): Promise<boolean> {
-    const signature = input.headers['x-provider-signature'] || input.headers['x-signature'];
-    if (!SECRET || !signature) return false;
-    const expected = createHmac('sha256', SECRET).update(input.rawBody).digest('hex');
-    const a = Buffer.from(signature, 'hex'); const b = Buffer.from(expected, 'hex');
-    return a.length === b.length && timingSafeEqual(a, b);
-  }
-  async normalizeCallback(input: unknown): Promise<OfferwallCallbackEvent> {
-    const v = input as Record<string, unknown>;
-    const eventId = text(v.eventId ?? v.event_id); const appId = text(v.appId ?? v.app_id); const offerwallExternalId = text(v.offerwallExternalId ?? v.offerwall_id ?? v.offerwallId); const eventType = text(v.eventType ?? v.event_type);
-    if (!eventId || !appId || !offerwallExternalId || !eventType) throw providerError('INVALID_CALLBACK', 'Provider callback is missing required identifiers', 400);
-    return { provider: this.name, eventId, appId, offerwallExternalId, eventType, userId: text(v.userId ?? v.user_id), rewardAmount: v.rewardAmount as OfferwallCallbackEvent['rewardAmount'], status: text(v.status), payload: v };
-  }
+  async verifyCallback(input: { headers: Record<string, string | undefined>; rawBody: string }): Promise<boolean> { const signature = input.headers['x-provider-signature'] || input.headers['x-signature']; if (!SECRET || !signature) return false; const expected = createHmac('sha256', SECRET).update(input.rawBody).digest('hex'); const a = new TextEncoder().encode(signature); const b = new TextEncoder().encode(expected); return a.length === b.length && timingSafeEqual(a, b); }
+  async normalizeCallback(input: unknown): Promise<OfferwallCallbackEvent> { const v = input as Record<string, unknown>; const eventId = text(v.eventId ?? v.event_id); const appId = text(v.appId ?? v.app_id); const offerwallExternalId = text(v.offerwallExternalId ?? v.offerwall_id ?? v.offerwallId); const eventType = text(v.eventType ?? v.event_type); if (!eventId || !appId || !offerwallExternalId || !eventType) throw providerError('INVALID_CALLBACK', 'Provider callback is missing required identifiers', 400); const result: OfferwallCallbackEvent = { provider: this.name, eventId, appId, offerwallExternalId, eventType, payload: v }; const userId = text(v.userId ?? v.user_id); const rewardAmount = v.rewardAmount as OfferwallCallbackEvent['rewardAmount'] | undefined; const status = text(v.status); if (userId) result.userId = userId; if (rewardAmount !== undefined) result.rewardAmount = rewardAmount; if (status) result.status = status; return result; }
 }
-
 export class OfferwallService {
   private readonly rewards: RewardEngine;
   constructor(private readonly db: PrismaClient, private readonly redis: RedisConnection, private readonly provider: OfferwallProvider = new HmacOfferwallProvider()) { this.rewards = new RewardEngine(db, redis); }
-
-  async callback(headers: Record<string, string | undefined>, rawBody: string, body: unknown) {
-    const verified = await withProviderTimeout(this.provider.verifyCallback({ headers, rawBody }));
-    if (!verified) throw providerError('INVALID_PROVIDER_CALLBACK', 'Provider callback signature is invalid', 401);
-    const event = await withProviderTimeout(this.provider.normalizeCallback(body));
-    const rate = await this.redis.incrementWithExpiry(`provider:offerwall:rate:${event.appId}`, 60);
-    if (rate > 120) throw providerError('PROVIDER_RATE_LIMITED', 'Provider callback rate limit exceeded', 429);
-    const rawHash = createHash('sha256').update(rawBody).digest('hex');
-    const safePayload = redact(event.payload);
-    await this.redis.set(`provider:offerwall:event:${event.eventId}`, JSON.stringify({ receivedAt: new Date().toISOString(), rawHash, payload: safePayload }), 7 * 24 * 60 * 60);
-    const offerwall = await this.db.offerwalls.findFirst({ where: { appId: event.appId, provider: event.provider, externalId: event.offerwallExternalId, status: 'ACTIVE' } });
-    if (!offerwall) throw providerError('OFFERWALL_NOT_FOUND', 'Offerwall is not active', 404);
-    const duplicate = await this.db.offerwallEvents.findFirst({ where: { appId: event.appId, offerwallId: offerwall.id, externalEventId: event.eventId } });
-    if (duplicate) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    if ((event.status || '').toUpperCase() !== 'COMPLETED') return { status: 'IGNORED', eventId: event.eventId, replayed: false };
-    if (!event.userId) throw providerError('USER_REQUIRED', 'Completed offerwall event must identify a user', 400);
-    const sessionId = text(event.payload.sessionId);
-    if (!sessionId) throw providerError('SESSION_REQUIRED', 'Provider callback must include a valid sessionId', 400);
-    const idempotencyKey = `offerwall:${event.provider}:${event.eventId}`;
-    const existingKey = await this.db.offerwallEvents.findUnique({ where: { idempotencyKey } });
-    if (existingKey) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    const reward = await this.rewards.grant({ userId: event.userId, appId: event.appId, sessionId, sourceType: 'offerwall', sourceId: offerwall.id, idempotencyKey, metadata: { provider: event.provider, eventId: event.eventId, eventType: event.eventType, rawHash } });
-    try {
-      await this.db.offerwallEvents.create({ data: { appId: event.appId, userId: event.userId, offerwallId: offerwall.id, externalEventId: event.eventId, eventType: event.eventType, rewardAmount: reward.amount, status: 'CONFIRMED', payload: safePayload as object, idempotencyKey } });
-    } catch (error) {
-      const existing = await this.db.offerwallEvents.findUnique({ where: { idempotencyKey } });
-      if (!existing) throw error;
-      return { status: 'DUPLICATE', eventId: event.eventId, replayed: true };
-    }
-    return { status: 'CONFIRMED', eventId: event.eventId, replayed: reward.replayed, reward };
-  }
+  async callback(headers: Record<string, string | undefined>, rawBody: string, body: unknown) { const verified = await withProviderTimeout(this.provider.verifyCallback({ headers, rawBody })); if (!verified) throw providerError('INVALID_PROVIDER_CALLBACK', 'Provider callback signature is invalid', 401); const event = await withProviderTimeout(this.provider.normalizeCallback(body)); const rate = await this.redis.incrementWithExpiry(`provider:offerwall:rate:${event.appId}`, 60); if (rate > 120) throw providerError('PROVIDER_RATE_LIMITED', 'Provider callback rate limit exceeded', 429); const rawHash = createHash('sha256').update(rawBody).digest('hex'); const safePayload = redact(event.payload); await this.redis.set(`provider:offerwall:event:${event.eventId}`, JSON.stringify({ receivedAt: new Date().toISOString(), rawHash, payload: safePayload }), 7 * 24 * 60 * 60); const offerwall = await this.db.offerwalls.findFirst({ where: { appId: event.appId, provider: event.provider, externalId: event.offerwallExternalId, status: 'ACTIVE' } }); if (!offerwall) throw providerError('OFFERWALL_NOT_FOUND', 'Offerwall is not active', 404); const duplicate = await this.db.offerwallEvents.findFirst({ where: { appId: event.appId, offerwallId: offerwall.id, externalEventId: event.eventId } }); if (duplicate) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; if ((event.status || '').toUpperCase() !== 'COMPLETED') return { status: 'IGNORED', eventId: event.eventId, replayed: false }; if (!event.userId) throw providerError('USER_REQUIRED', 'Completed offerwall event must identify a user', 400); const sessionId = text(event.payload.sessionId); if (!sessionId) throw providerError('SESSION_REQUIRED', 'Provider callback must include a valid sessionId', 400); const idempotencyKey = `offerwall:${event.provider}:${event.eventId}`; const existingKey = await this.db.offerwallEvents.findUnique({ where: { idempotencyKey } }); if (existingKey) return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; const reward = await this.rewards.grant({ userId: event.userId, appId: event.appId, sessionId, sourceType: 'offerwall', sourceId: offerwall.id, idempotencyKey, metadata: { provider: event.provider, eventId: event.eventId, eventType: event.eventType, rawHash } }); try { await this.db.offerwallEvents.create({ data: { appId: event.appId, userId: event.userId, offerwallId: offerwall.id, externalEventId: event.eventId, eventType: event.eventType, rewardAmount: reward.amount, status: 'CONFIRMED', payload: safePayload as object, idempotencyKey } }); } catch (error) { const existing = await this.db.offerwallEvents.findUnique({ where: { idempotencyKey } }); if (!existing) throw error; return { status: 'DUPLICATE', eventId: event.eventId, replayed: true }; } return { status: 'CONFIRMED', eventId: event.eventId, replayed: reward.replayed, reward }; }
 }
 function text(v: unknown): string | undefined { return typeof v === 'string' && v.trim() ? v.trim() : undefined; }
 function redact(v: unknown): unknown { if (Array.isArray(v)) return v.map(redact); if (!v || typeof v !== 'object') return v; const out: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v as Record<string, unknown>)) { const sensitive = /token|secret|signature|authorization|password|api[_-]?key/i.test(k); out[k] = sensitive ? '[REDACTED]' : redact(x); } return out; }
