@@ -1,0 +1,159 @@
+import type { PrismaClient } from '@prisma/client';
+import type { RedisConnection } from '../../core/redis.js';
+import { normalizeIntegrityStatus, type PlayIntegrityProvider, DefaultPlayIntegrityProvider } from './play-integrity.js';
+
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+export type SecurityAction = 'ALLOW' | 'LIMIT' | 'PENDING_REVIEW' | 'HOLD' | 'RESTRICT' | 'INVESTIGATE';
+
+export interface FraudContext {
+  appId: string;
+  userId: string;
+  sessionId: string;
+  deviceId?: string;
+  ipAddress?: string;
+  sourceType?: string;
+  sourceId?: string;
+  eventType?: string;
+  integrityStatus?: string;
+}
+
+export interface FraudAssessment {
+  score: number;
+  level: RiskLevel;
+  action: SecurityAction;
+  signals: Array<{ type: string; score: number; value?: string }>;
+}
+
+const LEVELS: Record<RiskLevel, { min: number; max: number }> = {
+  LOW: { min: 0, max: 30 },
+  MEDIUM: { min: 31, max: 70 },
+  HIGH: { min: 71, max: 100 },
+};
+
+export class FraudRiskEngine {
+  private readonly integrity: PlayIntegrityProvider;
+
+  constructor(private readonly db: PrismaClient, private readonly redis: RedisConnection, integrity?: PlayIntegrityProvider) {
+    this.integrity = integrity ?? new DefaultPlayIntegrityProvider();
+  }
+
+  async assess(context: FraudContext): Promise<FraudAssessment> {
+    const now = Date.now();
+    const hourAgo = new Date(now - 60 * 60 * 1000);
+    const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+    const signals: FraudAssessment['signals'] = [];
+
+    const [device, session, sessions, rewardsHour, rewardsDay, withdrawalsDay, referrals, recentRewards] = await Promise.all([
+      context.deviceId ? this.db.userDevices.findUnique({ where: { id: context.deviceId } }) : null,
+      this.db.userSessions.findUnique({ where: { id: context.sessionId } }),
+      this.db.userSessions.count({ where: { appId: context.appId, userId: context.userId, status: 'ACTIVE' } }),
+      this.db.rewardRedemptions.count({ where: { appId: context.appId, userId: context.userId, createdAt: { gte: hourAgo } } }),
+      this.db.rewardRedemptions.count({ where: { appId: context.appId, userId: context.userId, createdAt: { gte: dayAgo } } }),
+      this.db.withdrawals.count({ where: { appId: context.appId, userId: context.userId, createdAt: { gte: dayAgo }, status: { in: ['PENDING_REVIEW', 'APPROVED', 'PROCESSING', 'PENDING_PROVIDER', 'COMPLETED'] } } }),
+      this.db.referrals.findMany({ where: { appId: context.appId, OR: [{ referrerUserId: context.userId }, { referredUserId: context.userId }] }, select: { status: true }, take: 100 }),
+      this.db.rewardRedemptions.findMany({ where: { appId: context.appId, userId: context.userId, createdAt: { gte: hourAgo } }, orderBy: { createdAt: 'desc' }, take: 25, select: { createdAt: true, rewardId: true } }),
+    ]);
+
+    if (device) {
+      const deviceScore = Math.max(0, Math.min(20, Math.floor(device.riskScore / 5)));
+      if (deviceScore > 0) signals.push({ type: 'device', score: deviceScore, value: device.id });
+    }
+
+    if (context.ipAddress) {
+      const ipUsers = await this.db.userSessions.findMany({ where: { appId: context.appId, ipAddress: context.ipAddress, createdAt: { gte: dayAgo } }, distinct: ['userId'], select: { userId: true }, take: 50 });
+      if (ipUsers.length >= 10) signals.push({ type: 'ip', score: 10, value: `distinct_users:${ipUsers.length}` });
+      else if (ipUsers.length >= 5) signals.push({ type: 'ip', score: 6, value: `distinct_users:${ipUsers.length}` });
+      else if (ipUsers.length >= 3) signals.push({ type: 'ip', score: 3, value: `distinct_users:${ipUsers.length}` });
+      // IP is only a risk signal. It never blocks or identifies an account by itself.
+    }
+
+    if (!session || session.status !== 'ACTIVE') signals.push({ type: 'session', score: 15, value: 'invalid_or_inactive' });
+    else if (sessions >= 5) signals.push({ type: 'session', score: 8, value: `active_sessions:${sessions}` });
+    else if (sessions >= 3) signals.push({ type: 'session', score: 4, value: `active_sessions:${sessions}` });
+
+    if (rewardsHour >= 20) signals.push({ type: 'velocity', score: 20, value: `rewards_1h:${rewardsHour}` });
+    else if (rewardsHour >= 10) signals.push({ type: 'velocity', score: 12, value: `rewards_1h:${rewardsHour}` });
+    else if (rewardsHour >= 5) signals.push({ type: 'velocity', score: 5, value: `rewards_1h:${rewardsHour}` });
+
+    const rapidPairs = recentRewards.slice(0, -1).filter((item, index) => recentRewards[index].createdAt.getTime() - item.createdAt.getTime() <= 3000).length;
+    if (rapidPairs >= 5) signals.push({ type: 'behavior', score: 12, value: `rapid_reward_pairs:${rapidPairs}` });
+    else if (rapidPairs >= 2) signals.push({ type: 'behavior', score: 6, value: `rapid_reward_pairs:${rapidPairs}` });
+    if (rewardsDay >= 100) signals.push({ type: 'reward', score: 15, value: `rewards_24h:${rewardsDay}` });
+    else if (rewardsDay >= 60) signals.push({ type: 'reward', score: 8, value: `rewards_24h:${rewardsDay}` });
+
+    const rejectedReferrals = referrals.filter((referral) => referral.status === 'REJECTED').length;
+    if (rejectedReferrals >= 3) signals.push({ type: 'referral', score: 15, value: `rejected:${rejectedReferrals}` });
+    else if (rejectedReferrals >= 1) signals.push({ type: 'referral', score: 7, value: `rejected:${rejectedReferrals}` });
+
+    if (withdrawalsDay >= 10) signals.push({ type: 'withdrawal', score: 20, value: `withdrawals_24h:${withdrawalsDay}` });
+    else if (withdrawalsDay >= 5) signals.push({ type: 'withdrawal', score: 10, value: `withdrawals_24h:${withdrawalsDay}` });
+
+    const integrity = normalizeIntegrityStatus(context.integrityStatus ?? device?.integrityStatus);
+    if (integrity === 'FAILED') signals.push({ type: 'integrity', score: 25, value: integrity });
+    else if (integrity === 'UNVERIFIED') signals.push({ type: 'integrity', score: 8, value: integrity });
+    // UNSUPPORTED is deliberately neutral and does not automatically mean fraud.
+
+    if (device) {
+      const related = await this.db.deviceRelationships.count({ where: { appId: context.appId, OR: [{ deviceId: device.id }, { relatedDeviceId: device.id }], score: { gte: 50 } } });
+      if (related >= 3) signals.push({ type: 'account_relationships', score: 15, value: `device_relationships:${related}` });
+      else if (related >= 1) signals.push({ type: 'account_relationships', score: 7, value: `device_relationships:${related}` });
+    }
+
+    const score = Math.max(0, Math.min(100, signals.reduce((total, signal) => total + signal.score, 0)));
+    const level = score <= LEVELS.LOW.max ? 'LOW' : score <= LEVELS.MEDIUM.max ? 'MEDIUM' : 'HIGH';
+    const action: SecurityAction = level === 'LOW' ? 'ALLOW' : level === 'MEDIUM' ? 'PENDING_REVIEW' : 'HOLD';
+
+    await this.persistAssessment(context, { score, level, action, signals });
+    return { score, level, action, signals };
+  }
+
+  async enforceReward(context: FraudContext): Promise<FraudAssessment> {
+    const assessment = await this.assess(context);
+    if (assessment.level === 'HIGH') {
+      throw fraudError('FRAUD_HIGH_RISK', 'Reward request is held for security investigation', 403);
+    }
+    if (assessment.level === 'MEDIUM') {
+      throw fraudError('FRAUD_REVIEW_REQUIRED', 'Reward request requires security review', 409);
+    }
+    return assessment;
+  }
+
+  async recordEvent(context: FraudContext, type: string, scoreDelta: number, metadata?: Record<string, unknown>): Promise<void> {
+    const severity: RiskLevel = scoreDelta >= 15 ? 'HIGH' : scoreDelta >= 7 ? 'MEDIUM' : 'LOW';
+    await this.db.fraudEvents.create({ data: { appId: context.appId, userId: context.userId, deviceId: context.deviceId, type, severity, scoreDelta, metadata: metadata ? redactMetadata(metadata) : undefined } });
+  }
+
+  private async persistAssessment(context: FraudContext, assessment: FraudAssessment): Promise<void> {
+    await this.db.fraudScores.create({ data: { appId: context.appId, userId: context.userId, deviceId: context.deviceId, score: assessment.score, level: assessment.level, reason: assessment.signals.map((signal) => `${signal.type}:${signal.score}`).join(',') || 'no_risk_signals', calculatedAt: new Date() } });
+    if (assessment.signals.length > 0) {
+      await this.db.riskSignals.createMany({ data: assessment.signals.map((signal) => ({ appId: context.appId, userId: context.userId, deviceId: context.deviceId, signalType: signal.type, value: signal.value, score: signal.score })) });
+    }
+    await this.db.securityActions.create({ data: { appId: context.appId, userId: context.userId, deviceId: context.deviceId, action: assessment.action, reason: `risk_score:${assessment.score}`, status: assessment.action === 'ALLOW' ? 'APPLIED' : 'PENDING', performedAt: new Date() } });
+    if (assessment.level !== 'LOW') {
+      await this.db.fraudEvents.create({ data: { appId: context.appId, userId: context.userId, deviceId: context.deviceId, type: 'RISK_ASSESSMENT', severity: assessment.level, scoreDelta: assessment.score, metadata: { action: assessment.action, signalCount: assessment.signals.length } } });
+    }
+  }
+
+  async recordRewardHold(context: FraudContext, rewardId?: string, coinLedgerId?: string, reason = 'risk_review'): Promise<string> {
+    const hold = await this.db.rewardHolds.create({ data: { appId: context.appId, userId: context.userId, rewardId, coinLedgerId, reason, status: 'HELD' } });
+    await this.recordEvent(context, 'REWARD_HOLD', 10, { holdId: hold.id, reason });
+    return hold.id;
+  }
+
+  async trackVelocity(context: FraudContext): Promise<number> {
+    return this.redis.incrementWithExpiry(`fraud:velocity:${context.appId}:${context.userId}`, 60);
+  }
+}
+
+export function fraudError(code: string, message: string, statusCode: number): Error & { code: string; statusCode: number } {
+  const error = new Error(message) as Error & { code: string; statusCode: number };
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function redactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...metadata };
+  for (const key of Object.keys(copy)) if (/token|secret|authorization|password|accountnumber|phone/i.test(key)) copy[key] = '[REDACTED]';
+  return copy;
+}
