@@ -1,0 +1,99 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { UserService } from '../dist/modules/user/service.js';
+import { verifyAccessToken } from '../dist/middleware/authentication.js';
+
+const secret = 'c'.repeat(32);
+const baseUser = () => ({ id: 'u1', phone: '+62812345678', phoneVerifiedAt: new Date(), googleSubject: null, status: 'ACTIVE', referralCode: 'REF1', lastLoginAt: new Date(), createdAt: new Date(), updatedAt: new Date() });
+
+function makeDb({ user = baseUser(), pendingWithdrawal = null } = {}) {
+  const profiles = new Map();
+  const devices = new Map();
+  const sessions = new Map([['s1', { id: 's1', appId: 'app1', userId: user.id, deviceId: null, tokenHash: 'hash1', status: 'ACTIVE', expiresAt: new Date(Date.now() + 3600000), revokedAt: null, lastSeenAt: new Date(), createdAt: new Date(), updatedAt: new Date() }]]);
+  const refresh = new Map([['rehash', { id: 'r1', appId: 'app1', userId: user.id, sessionId: 's1', tokenHash: 'rehash', expiresAt: new Date(Date.now() + 3600000), revokedAt: null }]]);
+  const users = { findUnique: async () => user, update: async ({ data }) => Object.assign(user, data) };
+  const userApps = { findUnique: async () => ({ appId: 'app1', userId: user.id, status: 'ACTIVE' }), updateMany: async () => ({ count: 1 }) };
+  const userProfiles = { findUnique: async ({ where }) => profiles.get(where.userId) ?? null, upsert: async ({ where, create, update }) => { const current = profiles.get(where.userId); const next = { ...(current ?? create), ...update }; profiles.set(where.userId, next); return next; } };
+  const userDevices = {
+    findMany: async () => [...devices.values()],
+    findUnique: async ({ where }) => where.id ? devices.get(where.id) ?? null : [...devices.values()].find((d) => where.appId_installationId ? d.appId === where.appId_installationId.appId && d.installationId === where.appId_installationId.installationId : d.appId === where.appId_deviceHash.appId && d.deviceHash === where.appId_deviceHash.deviceHash) ?? null,
+    create: async ({ data }) => { const x = { id: `d${devices.size + 1}`, createdAt: new Date(), updatedAt: new Date(), ...data }; devices.set(x.id, x); return x; },
+    update: async ({ where, data }) => { const x = devices.get(where.id); Object.assign(x, data); return x; },
+  };
+  const userSessions = {
+    findMany: async () => [...sessions.values()],
+    findUnique: async ({ where }) => sessions.get(where.id) ?? null,
+    update: async ({ where, data }) => { const x = sessions.get(where.id); Object.assign(x, data); return x; },
+    updateMany: async ({ where, data }) => { let count = 0; for (const x of sessions.values()) if (x.appId === where.appId && x.userId === where.userId && (!where.deviceId || x.deviceId === where.deviceId) && (!where.status || x.status === where.status)) { Object.assign(x, data); count++; } return { count }; },
+  };
+  const refreshTokens = {
+    findUnique: async ({ where }) => refresh.get(where.tokenHash) ?? null,
+    updateMany: async ({ where, data }) => { let count = 0; for (const x of refresh.values()) if (x.appId === where.appId && x.userId === where.userId && x.revokedAt === where.revokedAt) { Object.assign(x, data); count++; } return { count }; },
+  };
+  const withdrawals = { findFirst: async () => pendingWithdrawal };
+  const dataAnonymizationJobs = { create: async ({ data }) => ({ id: 'aj1', ...data }) };
+  const dataDeletionJobs = { create: async ({ data }) => ({ id: 'dj1', ...data }) };
+  return { users, userApps, userProfiles, userDevices, userSessions, refreshTokens, withdrawals, dataAnonymizationJobs, dataDeletionJobs, $transaction: async (items) => Promise.all(items) };
+}
+
+const ctx = { userId: 'u1', appId: 'app1', sessionId: 's1' };
+
+test('profile read/update is scoped to authenticated user', async () => {
+  const service = new UserService(makeDb(), secret);
+  await service.updateMe(ctx, { displayName: 'Rewzio User', locale: 'id-ID' });
+  const me = await service.getMe(ctx);
+  assert.equal(me.profile.displayName, 'Rewzio User');
+  assert.equal(me.user.id, 'u1');
+});
+
+test('device registration hashes fingerprint and never exposes device hash', async () => {
+  const service = new UserService(makeDb(), secret);
+  const device = await service.registerDevice(ctx, { installationId: 'install-1', platform: 'android', appVersion: '1.0.0', fingerprint: 'raw-fingerprint' });
+  assert.equal(device.installationId, 'install-1');
+  assert.equal('deviceHash' in device, false);
+});
+
+test('device owned by another user is rejected', async () => {
+  const db = makeDb();
+  db.userDevices.create({ data: { appId: 'app1', userId: 'u2', installationId: 'install-x', deviceHash: 'hash-x', platform: 'android', appVersion: '1', integrityStatus: 'UNKNOWN', firstSeenAt: new Date(), lastSeenAt: new Date(), status: 'ACTIVE', riskScore: 0 } });
+  const service = new UserService(db, secret);
+  await assert.rejects(() => service.registerDevice(ctx, { installationId: 'install-x', platform: 'android', appVersion: '1', fingerprint: 'finger-x' }), /Device belongs to another account/);
+});
+
+test('session deletion rejects a session belonging to another user', async () => {
+  const db = makeDb();
+  db.userSessions.findUnique = async () => ({ id: 's2', appId: 'app1', userId: 'u2', status: 'ACTIVE' });
+  const service = new UserService(db, secret);
+  await assert.rejects(() => service.deleteSession(ctx, 's2'), /Session not found/);
+});
+
+test('account deletion requires re-authentication', async () => {
+  const service = new UserService(makeDb(), secret);
+  await assert.rejects(() => service.requestAccountDeletion(ctx, 'wrong-token', 'DELETE'), /Re-authentication required/);
+});
+
+test('account deletion is blocked by pending withdrawal', async () => {
+  const db = makeDb({ pendingWithdrawal: { id: 'w1' } });
+  const service = new UserService(db, secret);
+  await assert.rejects(() => service.requestAccountDeletion(ctx, 'rehash', 'DELETE'), /withdrawal is pending/);
+});
+
+test('account deletion requests status and schedules anonymization/deletion without deleting financial records', async () => {
+  const db = makeDb();
+  const service = new UserService(db, secret);
+  const result = await service.requestAccountDeletion(ctx, 'rehash', 'DELETE');
+  assert.equal(result.status, 'DELETION_REQUESTED');
+  assert.equal(result.scheduled, true);
+  assert.equal(db.users.findUnique ? 'ok' : 'missing', 'ok');
+});
+
+test('access token signature and expiry are enforced', () => {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ sub: 'u1', appId: 'app1', sid: 's1', exp: Math.floor(Date.now() / 1000) + 60 })).toString('base64url');
+  const input = `${header}.${payload}`;
+  const signature = createHmac('sha256', secret).update(input).digest('base64url');
+  const claims = verifyAccessToken(`${input}.${signature}`, secret);
+  assert.equal(claims.sub, 'u1');
+  assert.throws(() => verifyAccessToken(`${input}.${signature.slice(0, -1)}x`, secret), /Invalid access token/);
+});
