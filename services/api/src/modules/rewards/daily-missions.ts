@@ -11,9 +11,10 @@ export class DailyMissionService {
   async missions(appId: string, userId: string) {
     const now = new Date();
     const items = await this.db.missions.findMany({ where: { appId, status: 'CONFIRMED', startAt: { lte: now }, OR: [{ endAt: null }, { endAt: { gte: now } }] }, orderBy: { createdAt: 'desc' } });
-    const ids = items.map((m) => m.id); const completions = ids.length ? await this.db.missionCompletions.findMany({ where: { appId, userId, missionId: { in: ids } } }) : [];
-    const done = new Set(completions.filter((c) => c.status === 'CONFIRMED' && c.taskId === null).map((c) => c.missionId));
-    return items.map((m) => ({ ...m, completed: done.has(m.id) }));
+    const ids = items.map((m: (typeof items)[number]) => m.id);
+    const completions = ids.length ? await this.db.missionCompletions.findMany({ where: { appId, userId, missionId: { in: ids } } }) : [];
+    const done = new Set(completions.filter((c: (typeof completions)[number]) => c.status === 'CONFIRMED' && c.taskId === null).map((c: (typeof completions)[number]) => c.missionId));
+    return items.map((m: (typeof items)[number]) => ({ ...m, completed: done.has(m.id) }));
   }
   async mission(appId: string, userId: string, missionId: string) {
     const mission = await this.db.missions.findFirst({ where: { id: missionId, appId, status: 'CONFIRMED' } });
