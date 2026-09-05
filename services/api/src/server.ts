@@ -1,31 +1,44 @@
-import Fastify from 'fastify';
-import swagger from '@fastify/swagger';
-import swaggerUi from '@fastify/swagger-ui';
+import { buildApp } from './app.js';
+import { loadConfig } from './config/index.js';
+import { createDatabaseClient, connectDatabase, disconnectDatabase } from './core/database.js';
+import { RedisConnection, connectRedis } from './core/redis.js';
 
-export function buildServer() {
-  const app = Fastify({ logger: true });
+export async function startServer(): Promise<void> {
+  const config = loadConfig();
+  const db = createDatabaseClient();
+  const redis = new RedisConnection(config.redisUrl);
+  const app = buildApp(config, { db, redis });
+  let shuttingDown = false;
 
-  app.register(swagger, {
-    openapi: {
-      openapi: '3.0.3',
-      info: { title: 'Rewzio API', version: '0.1.0' },
-      servers: [{ url: '/' }]
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info({ signal }, 'graceful shutdown started');
+    try {
+      await app.close();
+      await Promise.allSettled([disconnectDatabase(db), redis.close()]);
+      app.log.info('graceful shutdown completed');
+    } catch (error) {
+      app.log.error({ err: error }, 'graceful shutdown failed');
+      process.exitCode = 1;
     }
-  });
+  };
 
-  app.register(swaggerUi, { routePrefix: '/api/docs' });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
-  app.get('/health', async () => ({ status: 'ok', service: 'rewzio-api' }));
-
-  return app;
+  try {
+    await connectDatabase(db);
+    await connectRedis(redis);
+    await app.listen({ host: config.host, port: config.port });
+    app.log.info({ host: config.host, port: config.port }, 'Rewzio API started');
+  } catch (error) {
+    app.log.error({ err: error }, 'Rewzio API failed to start');
+    await Promise.allSettled([app.close(), disconnectDatabase(db), redis.close()]);
+    process.exitCode = 1;
+  }
 }
 
-const app = buildServer();
-
 if (process.env.NODE_ENV !== 'test') {
-  const port = Number(process.env.PORT ?? 3001);
-  app.listen({ host: '0.0.0.0', port }).catch((error) => {
-    app.log.error(error);
-    process.exit(1);
-  });
+  void startServer();
 }
