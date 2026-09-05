@@ -15,7 +15,7 @@ export class WatchService {
   async list(appId: string): Promise<unknown[]> {
     const now = new Date();
     const items = await this.db.watchContents.findMany({ where: { appId, status: 'ACTIVE', AND: [{ OR: [{ startAt: null }, { startAt: { lte: now } }] }, { OR: [{ endAt: null }, { endAt: { gte: now } }] }] }, orderBy: { createdAt: 'desc' } });
-    return items.map((item) => ({ id: item.id, title: item.title, description: item.description, sourceUrl: item.sourceUrl, durationSeconds: item.durationSeconds, minimumWatchSeconds: item.minimumWatchSeconds, rewardAmount: item.rewardAmount.toString(), status: item.status }));
+    return items.map((item: (typeof items)[number]) => ({ id: item.id, title: item.title, description: item.description, sourceUrl: item.sourceUrl, durationSeconds: item.durationSeconds, minimumWatchSeconds: item.minimumWatchSeconds, rewardAmount: item.rewardAmount.toString(), status: item.status }));
   }
 
   async start(appId: string, userId: string, authSessionId: string, contentId: string, deviceId: string | null, idempotencyKey: string): Promise<unknown> {
