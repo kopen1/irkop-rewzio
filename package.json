@@ -1,0 +1,21 @@
+{
+  "name": "rewzio",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "apps/admin",
+    "services/api",
+    "packages/shared",
+    "packages/api-contract"
+  ],
+  "scripts": {
+    "build": "npm run build -ws --if-present",
+    "dev:api": "npm --workspace @rewzio/api run dev",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "test": "npm run test -ws --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
