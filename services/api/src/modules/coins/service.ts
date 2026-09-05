@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 
 const COINS_PER_IDR = 10n;
 const MAX_COIN_AMOUNT = 9_000_000_000_000_000_000n;
@@ -19,12 +19,18 @@ type LedgerInput = {
 
 type BalanceResult = { userId: string; appId: string; balance: bigint };
 
-/**
- * The coin ledger is the financial source of truth. `amount` is signed:
- * positive credits coins and negative debits coins. Callers of creditCoins()
- * and debitCoins() always supply a positive magnitude; Android never decides
- * the reward amount.
- */
+type ExistingLedger = {
+  id: string;
+  userId: string;
+  appId: string;
+  transactionType: string;
+  source: string;
+  amount: bigint;
+  referenceId: string | null;
+  balanceAfter: bigint;
+};
+
+/** Rewzio Coin: 10 coins = Rp1. Ledger is the financial source of truth. */
 export class CoinLedgerService {
   constructor(private readonly db: PrismaClient) {}
 
@@ -51,14 +57,13 @@ export class CoinLedgerService {
   private async applyDelta(input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> {
     validateInput(input);
 
-    return this.db.$transaction(async (tx: Prisma.TransactionClient) => {
+    return this.db.$transaction(async (tx) => {
       const account = await tx.coinAccounts.upsert({
         where: { appId_userId: { appId: input.appId, userId: input.userId } },
         create: { appId: input.appId, userId: input.userId, balance: 0n, version: 0n },
         update: {},
       });
 
-      // PostgreSQL row lock serializes every balance mutation for this account.
       const locked = await tx.$queryRaw<Array<{ id: string; balance: bigint; version: bigint }>>`
         SELECT "id", "balance", "version"
         FROM "coin_accounts"
@@ -97,7 +102,7 @@ export class CoinLedgerService {
           balanceBefore: current.balance,
           balanceAfter: nextBalance,
           status: input.status ?? 'CONFIRMED',
-          metadata: input.metadata as Prisma.InputJsonValue,
+          metadata: input.metadata === undefined ? undefined : JSON.parse(JSON.stringify(input.metadata)),
           idempotencyKey: input.idempotencyKey,
         },
       });
@@ -131,7 +136,7 @@ function validateInput(input: LedgerInput): void {
   }
 }
 
-function sameLedgerRequest(existing: Prisma.CoinLedgerGetPayload<object>, input: LedgerInput): boolean {
+function sameLedgerRequest(existing: ExistingLedger, input: LedgerInput): boolean {
   return existing.userId === input.userId &&
     existing.appId === input.appId &&
     existing.transactionType === input.transactionType &&
