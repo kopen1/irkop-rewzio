@@ -6,12 +6,14 @@ on:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
   pull_request:
     paths:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
 
 permissions:
@@ -41,16 +43,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm ci
       - run: npm --workspace @rewzio/api run db:generate
       - run: npm --workspace @rewzio/api run db:validate
       - name: Test database against current Prisma schema
