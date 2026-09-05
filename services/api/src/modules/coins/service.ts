@@ -1,5 +1,4 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-
 const COINS_PER_IDR = 10n;
 const MAX_COIN_AMOUNT = 9_000_000_000_000_000_000n;
 type LedgerStatus = 'PENDING' | 'CONFIRMED' | 'REVERSED' | 'VOID';
@@ -8,12 +7,12 @@ type BalanceResult = { userId: string; appId: string; balance: bigint };
 type ExistingLedger = { id: string; userId: string; appId: string; transactionType: string; source: string; amount: bigint; referenceId: string | null; balanceAfter: bigint };
 export class CoinLedgerService {
   constructor(private readonly db: PrismaClient) {}
-  async creditCoins(input: Omit<LedgerInput, 'amount'> & { amount: bigint }): Promise<BalanceResult & { ledgerId: string }> { const amount = positiveAmount(input.amount); return this.applyDelta({ ...input, amount, transactionType: input.transactionType || 'CREDIT' }); }
-  async debitCoins(input: Omit<LedgerInput, 'amount'> & { amount: bigint }): Promise<BalanceResult & { ledgerId: string }> { const amount = positiveAmount(input.amount); return this.applyDelta({ ...input, amount: -amount, transactionType: input.transactionType || 'DEBIT' }); }
+  async creditCoins(input: Omit<LedgerInput, 'amount'> & { amount: bigint }): Promise<BalanceResult & { ledgerId: string }> { return this.applyDelta({ ...input, amount: positiveAmount(input.amount), transactionType: input.transactionType || 'CREDIT' }); }
+  async debitCoins(input: Omit<LedgerInput, 'amount'> & { amount: bigint }): Promise<BalanceResult & { ledgerId: string }> { return this.applyDelta({ ...input, amount: -positiveAmount(input.amount), transactionType: input.transactionType || 'DEBIT' }); }
   async getBalance(appId: string, userId: string): Promise<BalanceResult> { const account = await this.db.coinAccounts.findUnique({ where: { appId_userId: { appId, userId } } }); return { userId, appId, balance: account?.balance ?? 0n }; }
   async createLedgerEntry(input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> { if (input.amount === 0n) throw coinError('INVALID_COIN_AMOUNT', 'Coin amount cannot be zero', 400); return this.applyDelta(input); }
   async createLedgerEntryInTransaction(tx: Prisma.TransactionClient, input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> { if (input.amount === 0n) throw coinError('INVALID_COIN_AMOUNT', 'Coin amount cannot be zero', 400); validateInput(input); return this.applyDeltaInTransaction(tx, input); }
-  private async applyDelta(input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> { validateInput(input); return this.db.$transaction(async (tx: Prisma.TransactionClient) => this.applyDeltaInTransaction(tx, input), { isolationLevel: 'Serializable' }); }
+  private async applyDelta(input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> { validateInput(input); return this.db.$transaction((tx: Prisma.TransactionClient) => this.applyDeltaInTransaction(tx, input), { isolationLevel: 'Serializable' }); }
   private async applyDeltaInTransaction(tx: Prisma.TransactionClient, input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> {
     const account = await tx.coinAccounts.upsert({ where: { appId_userId: { appId: input.appId, userId: input.userId } }, create: { appId: input.appId, userId: input.userId, balance: 0n, version: 0n }, update: {} });
     const locked = await tx.$queryRaw<Array<{ id: string; balance: bigint; version: bigint }>>`SELECT "id", "balance", "version" FROM "coin_accounts" WHERE "id" = ${account.id} AND "appId" = ${input.appId} AND "userId" = ${input.userId} FOR UPDATE`;
