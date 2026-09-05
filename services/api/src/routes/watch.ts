@@ -7,7 +7,7 @@ import { authenticateUser, type AccessClaims } from '../middleware/authenticatio
 import { WatchService } from '../modules/watch/service.js';
 
 interface Req extends FastifyRequest { userClaims?: AccessClaims }
-interface Body { appId?: string; contentId?: string; deviceId?: string; idempotencyKey?: string; positionSeconds?: number; metadata?: unknown }
+interface Body { appId?: string; contentId?: string; deviceId?: string; watchSessionId?: string; idempotencyKey?: string; positionSeconds?: number; metadata?: unknown }
 
 export function registerWatchRoutes(app: FastifyInstance, config: AppConfig, db: PrismaClient, redis: RedisConnection): void {
   const service = new WatchService(db, redis);
@@ -22,13 +22,13 @@ export function registerWatchRoutes(app: FastifyInstance, config: AppConfig, db:
     });
     api.post<{ Body: Body }>('/watch/heartbeat', async (request) => {
       const claims = await auth(request as Req); checkApp(request.body?.appId, claims);
-      if (!request.body?.positionSeconds && request.body?.positionSeconds !== 0) throw bad(400, 'INVALID_POSITION', 'positionSeconds is required');
-      return ok(await service.heartbeat(claims.appId, claims.sub, claims.sid, request.body.positionSeconds, request.body.metadata));
+      if (!request.body?.watchSessionId || request.body.positionSeconds === undefined) throw bad(400, 'INVALID_HEARTBEAT', 'watchSessionId and positionSeconds are required');
+      return ok(await service.heartbeat(claims.appId, claims.sub, claims.sid, request.body.watchSessionId, request.body.positionSeconds, request.body.metadata));
     });
     api.post<{ Body: Body }>('/watch/complete', async (request) => {
       const claims = await auth(request as Req); checkApp(request.body?.appId, claims);
-      if (!request.body?.idempotencyKey) throw bad(400, 'INVALID_IDEMPOTENCY_KEY', 'idempotencyKey is required');
-      return ok(await service.complete(claims.appId, claims.sub, claims.sid, request.body.idempotencyKey));
+      if (!request.body?.watchSessionId || !request.body.idempotencyKey) throw bad(400, 'INVALID_COMPLETION', 'watchSessionId and idempotencyKey are required');
+      return ok(await service.complete(claims.appId, claims.sub, claims.sid, request.body.watchSessionId, request.body.idempotencyKey));
     });
   }, { prefix: '/api/v1' });
 }
