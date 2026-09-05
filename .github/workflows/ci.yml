@@ -6,16 +6,50 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: write
+
+concurrency:
+  group: rewzio-ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   node:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm install
+          package-manager-cache: false
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - name: Commit generated npm lockfile
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            echo 'ERROR: package-lock.json was not generated'
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo 'PASS: package-lock.json already committed'
+          else
+            git commit -m 'chore(ci): add npm lockfile'
+            git pull --rebase origin master
+            git push
+          fi
