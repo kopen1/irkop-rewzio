@@ -6,22 +6,16 @@ on:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
-      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
   pull_request:
     paths:
       - 'services/api/prisma/**'
       - 'services/api/package.json'
       - 'package.json'
-      - 'package-lock.json'
       - '.github/workflows/prisma-db.yml'
 
 permissions:
   contents: write
-
-concurrency:
-  group: rewzio-ci-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   prisma:
@@ -84,6 +78,13 @@ jobs:
             echo "PASS: migration already committed"
           else
             git commit -m "feat(db): add initial Prisma migration"
-            git pull --rebase origin master
-            git push
+            for attempt in 1 2 3; do
+              if git pull --rebase origin master && git push; then
+                exit 0
+              fi
+              echo "WARN: push attempt $attempt failed; retrying"
+              sleep 2
+            done
+            echo "ERROR: unable to push generated migration"
+            exit 1
           fi
