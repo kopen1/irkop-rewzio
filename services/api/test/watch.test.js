@@ -32,5 +32,5 @@ test('rapid completion is rejected even when client reports enough watch time', 
   };
   const redis = { incrementWithExpiry: async () => 1 };
   const service = new WatchService(db, redis);
-  await assert.rejects(() => service.complete('a1', 'u1', 'auth1', 'w1', 'rapid-1234'), /Rapid completion/);
+  await assert.rejects(() => service.complete('a1', 'u1', 'auth1', 'w1', 'rapid-1234'), /Watch completed too quickly/);
 });
