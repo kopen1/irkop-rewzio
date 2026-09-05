@@ -41,16 +41,12 @@ jobs:
             echo 'ERROR: package-lock.json was not generated'
             exit 1
           fi
-          # Next.js may update the tracked admin tsconfig during build; never commit CI-generated config changes.
-          if [ -f apps/admin/tsconfig.json ]; then
-            git restore -- apps/admin/tsconfig.json
-          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package-lock.json
-          if git diff --cached --quiet; then
-            echo 'PASS: package-lock.json already committed'
-          else
+          # Keep only the generated lockfile staged; discard tracked build-time changes such as Next.js tsconfig edits.
+          git diff --name-only -z | xargs -0 -r git restore --
+          if git diff --cached --name-only | grep -qx 'package-lock.json'; then
             git commit -m 'chore(ci): add npm lockfile'
             for attempt in 1 2 3; do
               if git pull --rebase origin master && git push; then
@@ -61,4 +57,6 @@ jobs:
             done
             echo 'ERROR: unable to push generated package-lock.json'
             exit 1
+          else
+            echo 'PASS: package-lock.json already committed'
           fi
