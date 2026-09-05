@@ -1,0 +1,73 @@
+name: Rewzio Prisma DB
+
+on:
+  push:
+    paths:
+      - 'services/api/prisma/**'
+      - 'services/api/package.json'
+      - 'package.json'
+      - '.github/workflows/prisma-db.yml'
+  pull_request:
+    paths:
+      - 'services/api/prisma/**'
+      - 'services/api/package.json'
+      - 'package.json'
+      - '.github/workflows/prisma-db.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prisma:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rewzio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rewzio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rewzio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm --workspace @rewzio/api run db:generate
+      - run: npm --workspace @rewzio/api run db:validate
+      - name: Generate initial migration when absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="services/api/prisma/migrations/0001_init"
+          if [ ! -f "$dir/migration.sql" ]; then
+            mkdir -p "$dir"
+            npx --workspace @rewzio/api prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > "$dir/migration.sql"
+            printf 'provider = "postgresql"\n' > services/api/prisma/migrations/migration_lock.toml
+          fi
+      - run: npm --workspace @rewzio/api run db:migrate:deploy
+      - run: npm --workspace @rewzio/api run db:seed
+      - name: Commit generated migration
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/api/prisma/migrations
+          if git diff --cached --quiet; then
+            echo "PASS: migration already committed"
+          else
+            git commit -m "feat(db): add initial Prisma migration"
+            git push
+          fi
