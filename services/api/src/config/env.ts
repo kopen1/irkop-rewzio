@@ -52,7 +52,7 @@ export function loadConfig(): AppConfig {
     host: process.env.HOST?.trim() || '0.0.0.0',
     port: numberEnv('PORT', 3001),
     databaseUrl: validUrl('DATABASE_URL', databaseUrl, ['postgresql:', 'postgres:']),
-    redisUrl: validUrl('REDIS_URL', redisUrl, ['redis:', 'rediss:']),
+    redisUrl: validUrl('REDIS_URL', redisUrl, ['redis:']),
     corsOrigin: process.env.CORS_ORIGIN?.trim() || '*',
     logLevel: process.env.LOG_LEVEL?.trim() || 'info',
   };

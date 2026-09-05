@@ -2,16 +2,16 @@ import { createConnection, type Socket } from 'node:net';
 
 function parseRedisUrl(redisUrl: string): { host: string; port: number; password?: string; database: number } {
   const url = new URL(redisUrl);
-  if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') {
-    throw new Error('REDIS_URL must use redis:// or rediss://');
-  }
-  if (url.protocol === 'rediss:') {
-    throw new Error('REDIS_URL rediss:// is not supported by the built-in client');
-  }
+  if (url.protocol !== 'redis:') throw new Error('REDIS_URL must use redis://');
   const database = url.pathname.length > 1 ? Number(url.pathname.slice(1)) : 0;
   if (!Number.isInteger(database) || database < 0) throw new Error('Invalid Redis database number');
-  const password = url.password ? decodeURIComponent(url.password) : undefined;
-  return { host: url.hostname || '127.0.0.1', port: Number(url.port) || 6379, password, database };
+  const target: { host: string; port: number; password?: string; database: number } = {
+    host: url.hostname || '127.0.0.1',
+    port: Number(url.port) || 6379,
+    database,
+  };
+  if (url.password) target.password = decodeURIComponent(url.password);
+  return target;
 }
 
 function command(parts: string[]): string {

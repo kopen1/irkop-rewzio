@@ -15,10 +15,11 @@ export function registerErrorHandler(app: FastifyInstance): void {
   });
 
   app.setErrorHandler(async (error, request, reply) => {
+    const err = error as { statusCode?: number; message?: string };
     request.log.error({ err: error, requestId: request.id }, 'request failed');
-    const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+    const statusCode = err.statusCode && err.statusCode >= 400 && err.statusCode < 500 ? err.statusCode : 500;
     const code = statusCode === 400 ? 'BAD_REQUEST' : statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR';
-    const message = statusCode < 500 ? error.message : 'Internal server error';
+    const message = statusCode < 500 ? err.message || 'Request failed' : 'Internal server error';
     return reply.status(statusCode).send({ success: false, error: { code, message } });
   });
 }
