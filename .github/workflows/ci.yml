@@ -41,6 +41,10 @@ jobs:
             echo 'ERROR: package-lock.json was not generated'
             exit 1
           fi
+          # Next.js may update the tracked admin tsconfig during build; never commit CI-generated config changes.
+          if [ -f apps/admin/tsconfig.json ]; then
+            git restore -- apps/admin/tsconfig.json
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package-lock.json
