@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 const COINS_PER_IDR = 10n;
 const MAX_COIN_AMOUNT = 9_000_000_000_000_000_000n;
@@ -57,7 +57,7 @@ export class CoinLedgerService {
   private async applyDelta(input: LedgerInput): Promise<BalanceResult & { ledgerId: string }> {
     validateInput(input);
 
-    return this.db.$transaction(async (tx) => {
+    return this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       const account = await tx.coinAccounts.upsert({
         where: { appId_userId: { appId: input.appId, userId: input.userId } },
         create: { appId: input.appId, userId: input.userId, balance: 0n, version: 0n },
