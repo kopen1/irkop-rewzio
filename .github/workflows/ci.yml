@@ -23,6 +23,8 @@ jobs:
         run: npm ci
       - name: Build shared package prerequisite
         run: npm --workspace @rewzio/shared run build
+      - name: Build API contract prerequisite
+        run: npm --workspace @rewzio/api-contract run build
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
