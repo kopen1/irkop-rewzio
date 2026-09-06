@@ -13,7 +13,7 @@
     "build": "npm run build -ws --if-present",
     "dev:api": "npm --workspace @rewzio/api run dev",
     "typecheck": "npm run typecheck -ws --if-present",
-    "test": "npm run test -ws --if-present"
+    "test": "npm run test -ws --if-present && node tests/run-all.mjs"
   },
   "engines": {
     "node": ">=22"
