@@ -1,8 +1,4 @@
-export default function HomePage() {
-  return (
-    <main>
-      <h1>Rewzio Admin</h1>
-      <p>Foundation only. Admin authorization and RBAC are required before operational features are enabled.</p>
-    </main>
-  );
-}
+import { redirect } from "next/navigation";
+import { getAdminSession } from "../lib/auth";
+import AdminShell from "../components/admin-shell";
+export default async function Home(){const s=await getAdminSession();if(!s)redirect("/login");return <AdminShell role={s.role} email={s.email}/>}

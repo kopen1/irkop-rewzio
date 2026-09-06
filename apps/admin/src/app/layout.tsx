@@ -1,9 +1,3 @@
-import type { ReactNode } from 'react';
-
-export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
-    <html lang="id">
-      <body>{children}</body>
-    </html>
-  );
-}
+import "./globals.css";
+export const metadata={title:"Rewzio Admin",description:"Rewzio administration console"};
+export default function Layout({children}:{children:React.ReactNode}){return <html lang="en"><body>{children}</body></html>}
