@@ -70,7 +70,7 @@ jobs:
           exit 1
 
       - name: Run local staging API E2E smoke
-        run: node tests/e2e/staging-local.mjs
+        run: node infrastructure/staging/e2e-local.mjs
 
       - name: Verify staging-only configuration
         env:
