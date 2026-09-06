@@ -1,12 +1,9 @@
 export interface EconomicEnv {
   DB: D1Database;
+  ECONOMIC_COORDINATOR: DurableObjectNamespace;
 }
 
-/**
- * Per-user serialization boundary for balance-affecting operations.
- * D1 remains the durable source of truth; the Durable Object only coordinates
- * concurrent economic commands so callers cannot race a balance transition.
- */
+/** Per-user serialization boundary. D1 remains the economic source of truth. */
 export class EconomicCoordinator {
   private readonly state: DurableObjectState;
   private readonly env: EconomicEnv;
@@ -20,10 +17,6 @@ export class EconomicCoordinator {
     if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
     const command = await request.json<{ type?: string }>();
     if (!command.type) return Response.json({ error: 'command_type_required' }, { status: 400 });
-
-    // The coordinator deliberately exposes a narrow command surface. Economic
-    // mutations are implemented by the API layer and committed to D1 atomically.
-    // This object is the serialization gate, not a second balance database.
     return Response.json({ ok: true, command: command.type });
   }
 }
