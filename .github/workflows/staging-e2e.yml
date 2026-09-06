@@ -42,13 +42,8 @@ jobs:
           DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
         run: node infrastructure/staging/seed-demo.mjs
 
-      - name: Run API staging E2E smoke
-        env:
-          STAGING_API_URL: http://127.0.0.1:3001
-          STAGING_ADMIN_URL: http://127.0.0.1:3001
-          STAGING_WEBSITE_URL: http://127.0.0.1:3001
-          STAGING_CDN_URL: http://127.0.0.1:3001
-        run: node tests/e2e/staging-smoke.mjs
+      - name: Run local staging API E2E smoke
+        run: node tests/e2e/staging-local.mjs
 
       - name: Verify staging-only configuration
         env:
