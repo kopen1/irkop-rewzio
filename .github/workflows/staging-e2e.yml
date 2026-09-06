@@ -28,8 +28,9 @@ jobs:
       - name: Start isolated staging stack
         env:
           POSTGRES_PASSWORD: staging-ci-only-password
-          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret
-          OTP_SECRET: staging-ci-only-otp-secret
+          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+          OTP_SECRET: staging-ci-only-otp-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+          GOOGLE_CLIENT_ID: staging-client.apps.googleusercontent.com
         run: docker compose -f infrastructure/staging/docker-compose.yml up -d --build
 
       - name: Prepare staging database
@@ -70,6 +71,7 @@ jobs:
         if: always()
         env:
           POSTGRES_PASSWORD: staging-ci-only-password
-          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret
-          OTP_SECRET: staging-ci-only-otp-secret
+          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+          OTP_SECRET: staging-ci-only-otp-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+          GOOGLE_CLIENT_ID: staging-client.apps.googleusercontent.com
         run: docker compose -f infrastructure/staging/docker-compose.yml down -v
