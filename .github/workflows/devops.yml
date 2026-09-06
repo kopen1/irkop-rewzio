@@ -53,7 +53,7 @@ jobs:
           cache: npm
       - name: Refresh dependency lockfile
         run: |
-          npm install --package-lock-only --ignore-scripts
+          npm install --package-lock-only --ignore-scripts --force
           if git diff --quiet -- package-lock.json; then
             echo "Lockfile already current."
             exit 0
