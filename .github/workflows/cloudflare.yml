@@ -15,26 +15,65 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 22
+
 jobs:
-  deploy-staging:
+  validate-cloudflare:
     if: github.ref == 'refs/heads/migration/cloudflare'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Generate D1 schema
+        run: node scripts/cloudflare/generate-d1-schema.mjs > /tmp/rewzio-d1.sql
+      - name: Validate generated D1 schema
+        run: test -s /tmp/rewzio-d1.sql
+      - name: Validate Worker source
+        run: npx tsc --noEmit -p services/api/tsconfig.json
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/migration/cloudflare' && github.event_name == 'workflow_dispatch'
+    needs: validate-cloudflare
     runs-on: ubuntu-latest
     environment: staging
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      - name: Require Cloudflare credentials
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CF_TOKEN"
+          test -n "$CF_ACCOUNT"
+      - name: Ensure staging D1 exists
+        id: d1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ secrets.REWZIO_STAGING_D1_ID }}" ]; then
+            echo "id=${{ secrets.REWZIO_STAGING_D1_ID }}" >> "$GITHUB_OUTPUT"
+          else
+            npx wrangler d1 create rewzio-staging > /tmp/d1-create.txt
+            id=$(sed -n 's/.*database_id = "\([^"]*\)".*/\1/p' /tmp/d1-create.txt | head -1)
+            test -n "$id"
+            echo "id=$id" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare staging config
+        run: sed "s/__SET_WITH_WRANGLER__/${{ steps.d1.outputs.id }}/g" wrangler.toml > /tmp/wrangler.toml
       - name: Generate D1 schema
         run: node scripts/cloudflare/generate-d1-schema.mjs > /tmp/rewzio-d1.sql
-      - name: Prepare Cloudflare config
-        env:
-          D1_ID: ${{ secrets.REWZIO_STAGING_D1_ID }}
-        run: |
-          test -n "$D1_ID"
-          sed "s/__SET_WITH_WRANGLER__/$D1_ID/g" wrangler.toml > /tmp/wrangler.toml
       - name: Apply D1 schema
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -48,22 +87,31 @@ jobs:
 
   deploy-production:
     if: github.event_name == 'workflow_dispatch'
+    needs: validate-cloudflare
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: node scripts/cloudflare/generate-d1-schema.mjs > /tmp/rewzio-d1.sql
+      - name: Require production Cloudflare credentials
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_ID: ${{ secrets.REWZIO_PRODUCTION_D1_ID }}
+        run: |
+          test -n "$CF_TOKEN"
+          test -n "$CF_ACCOUNT"
+          test -n "$D1_ID"
       - name: Prepare production config
         env:
           D1_ID: ${{ secrets.REWZIO_PRODUCTION_D1_ID }}
-        run: |
-          test -n "$D1_ID"
-          sed "s/__SET_WITH_WRANGLER__/$D1_ID/g" wrangler.toml > /tmp/wrangler.toml
+        run: sed "s/__SET_WITH_WRANGLER__/$D1_ID/g" wrangler.toml > /tmp/wrangler.toml
+      - name: Generate D1 schema
+        run: node scripts/cloudflare/generate-d1-schema.mjs > /tmp/rewzio-d1.sql
       - name: Apply D1 schema
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
