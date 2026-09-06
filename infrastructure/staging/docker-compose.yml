@@ -4,13 +4,15 @@ services:
       context: ../..
       dockerfile: infrastructure/docker/Dockerfile
     environment:
-      NODE_ENV: staging
+      NODE_ENV: production
       APP_ENV: staging
       APP_NAME: rewzio-staging
       DATABASE_URL: postgresql://rewzio_staging:${POSTGRES_PASSWORD:?staging postgres password is required}@postgres:5432/rewzio_staging
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?staging JWT_ACCESS_SECRET is required}
       OTP_SECRET: ${OTP_SECRET:?staging OTP_SECRET is required}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?staging GOOGLE_CLIENT_ID is required}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:3001}
       PAYOUT_MODE: MOCK
       IS_DEMO: "true"
       SOCIAL_PROOF_IS_DEMO: "true"
