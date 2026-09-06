@@ -21,7 +21,7 @@ function dbStub({ coins = 2_000_000n, capacity = undefined } = {}) {
   const db = {
     appSettings: { findUnique: async () => capacity ? { value: capacity } : null },
     withdrawalMethods: { findFirst: async () => ({ id: 'm1', status: 'VERIFIED' }) },
-    userSessions: { findUnique: async () => ({ id: 's1', status: 'ACTIVE', ipAddress: '10.0.0.1' }) },
+    userSessions: { findUnique: async () => ({ id: 's1', status: 'ACTIVE', ipAddress: '10.0.0.1' }), count: async () => 1 },
     withdrawals: {
       findUnique: async ({ where }) => state.withdrawals.get(where.idempotencyKey) ?? null,
       count: async () => 0,
@@ -41,44 +41,23 @@ function dbStub({ coins = 2_000_000n, capacity = undefined } = {}) {
 }
 
 const redis = { incrementWithExpiry: async () => 1 };
+async function request(service, key, amount = 10000n) { return service.requestWithdrawal({ appId: 'a1', userId: 'u1', sessionId: 's1', methodId: 'm1', amount, idempotencyKey: key, deviceId: 'd1', ipAddress: '10.0.0.1' }); }
 
-async function request(service, key, amount = 10000n) {
-  return service.requestWithdrawal({ appId: 'a1', userId: 'u1', sessionId: 's1', methodId: 'm1', amount, idempotencyKey: key, deviceId: 'd1', ipAddress: '10.0.0.1' });
-}
-
-test('minimum withdrawal is Rp10.000', async () => {
-  const { db } = dbStub();
-  const service = new WalletWithdrawalService(db, redis);
-  await assert.rejects(() => request(service, 'minimum-1', 9999n), /Minimum withdrawal/);
-});
+test('minimum withdrawal is Rp10.000', async () => { const { db } = dbStub(); const service = new WalletWithdrawalService(db, redis); await assert.rejects(() => request(service, 'minimum-1', 9999n), /Minimum withdrawal/); });
 
 test('concurrent withdrawals lock balance atomically', async () => {
-  const { db, state } = dbStub({ coins: 2_000_000n });
-  const service = new WalletWithdrawalService(db, redis);
+  const { db, state } = dbStub({ coins: 2_000_000n }); const service = new WalletWithdrawalService(db, redis);
   const results = await Promise.allSettled([request(service, 'concurrent-a', 150000n), request(service, 'concurrent-b', 150000n)]);
-  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
-  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
-  assert.equal(state.wallet.locked, 150000n);
-  assert.equal(state.wallet.available, 50000n);
-  assert.equal(state.withdrawals.size, 1);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1); assert.equal(results.filter((result) => result.status === 'rejected').length, 1); assert.equal(state.wallet.locked, 150000n); assert.equal(state.wallet.available, 50000n); assert.equal(state.withdrawals.size, 1);
 });
 
 test('daily capacity produces PENDING_CAPACITY without releasing the lock', async () => {
   const { db, state } = dbStub({ coins: 500_000n, capacity: { enable_daily_limit: true, max_wd_users_per_day: 0, max_wd_transactions_per_day: 1, max_payout_amount_per_day: '0', max_wd_per_user_per_day: 0, max_wd_amount_per_user_per_day: '0', reset_time: '00:00' } });
-  const service = new WalletWithdrawalService(db, redis);
-  await request(service, 'capacity-a', 10000n);
-  const second = await request(service, 'capacity-b', 10000n);
-  assert.equal(second.status, 'PENDING_CAPACITY');
-  assert.equal(state.wallet.locked, 20000n);
-  assert.equal(state.wallet.available, 30000n);
+  const service = new WalletWithdrawalService(db, redis); await request(service, 'capacity-a', 10000n); const second = await request(service, 'capacity-b', 10000n);
+  assert.equal(second.status, 'PENDING_CAPACITY'); assert.equal(state.wallet.locked, 20000n); assert.equal(state.wallet.available, 30000n);
 });
 
 test('same idempotency key replays the same withdrawal without another lock', async () => {
-  const { db, state } = dbStub({ coins: 500_000n });
-  const service = new WalletWithdrawalService(db, redis);
-  const first = await request(service, 'replay-1', 10000n);
-  const second = await request(service, 'replay-1', 10000n);
-  assert.equal(first.id, second.id);
-  assert.equal(state.withdrawals.size, 1);
-  assert.equal(state.wallet.locked, 10000n);
+  const { db, state } = dbStub({ coins: 500_000n }); const service = new WalletWithdrawalService(db, redis); const first = await request(service, 'replay-1', 10000n); const second = await request(service, 'replay-1', 10000n);
+  assert.equal(first.id, second.id); assert.equal(state.withdrawals.size, 1); assert.equal(state.wallet.locked, 10000n);
 });
