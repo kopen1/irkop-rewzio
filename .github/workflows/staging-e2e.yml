@@ -46,6 +46,24 @@ jobs:
           DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
         run: node infrastructure/staging/seed-demo.mjs
 
+      - name: Verify staging API process
+        run: |
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent --show-error http://127.0.0.1:3001/health >/dev/null; then
+              echo "STAGING API PROCESS PASS"
+              exit 0
+            fi
+            if ! docker compose -f infrastructure/staging/docker-compose.yml ps --status running api | grep -q staging-api; then
+              echo "STAGING API PROCESS ERROR: container is not running"
+              docker compose -f infrastructure/staging/docker-compose.yml logs --no-color api
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "STAGING API PROCESS ERROR: health endpoint did not become ready"
+          docker compose -f infrastructure/staging/docker-compose.yml logs --no-color api
+          exit 1
+
       - name: Run local staging API E2E smoke
         run: node tests/e2e/staging-local.mjs
 
@@ -60,7 +78,7 @@ jobs:
           const prisma = new PrismaClient();
           const app = await prisma.apps.findUnique({ where: { slug: 'rewzio-staging' } });
           if (!app || app.environment !== 'STAGING') throw new Error('staging app/environment check failed');
-          const settings = await prisma.appSettings.findMany({ where: { appId: app.id, key: { in: ['is_demo', 'social_proof_is_demo', 'payout_mode'] } } });
+          const settings = await prisma.appSettings.findMany({ where: { appId: app.id, key: { in: ['is_demo', 'social_proof_is_demo', 'payout_mode'] } });
           const map = Object.fromEntries(settings.map((item) => [item.key, item.value]));
           if (map.is_demo !== true || map.social_proof_is_demo !== true || map.payout_mode !== 'MOCK') throw new Error('staging demo/payout flags are incorrect');
           console.log('STAGING CONFIG PASS');
