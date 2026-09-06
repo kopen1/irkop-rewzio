@@ -2,12 +2,14 @@ name: Android Debug APK
 on:
   push:
     branches: [master]
-    paths: ['apps/android/**']
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  android:
+  android-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,13 +20,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Verify Gradle wrapper
+        run: ./gradlew --version
+      - name: Clean
+        run: ./gradlew clean --no-daemon
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Verify APK
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: rewzio-debug-apk
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
