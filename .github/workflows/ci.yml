@@ -12,6 +12,41 @@ permissions:
 jobs:
   node:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rewzio_test
+          POSTGRES_PASSWORD: rewzio_test
+          POSTGRES_DB: rewzio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rewzio_test -d rewzio_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://rewzio_test:rewzio_test@127.0.0.1:5432/rewzio_test
+      TEST_DATABASE_URL: postgresql://rewzio_test:rewzio_test@127.0.0.1:5432/rewzio_test
+      REDIS_URL: redis://127.0.0.1:6379
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      JWT_ACCESS_SECRET: ci-only-jwt-secret-012345678901234567890
+      OTP_SECRET: ci-only-otp-secret-012345678901234567890
+      GOOGLE_CLIENT_ID: ci-test-client.apps.googleusercontent.com
+      APP_NAME: rewzio-ci
+      PORT: 3001
+      CORS_ORIGIN: http://127.0.0.1:3001
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
@@ -25,6 +60,14 @@ jobs:
         run: npm --workspace @rewzio/shared run build
       - name: Build API contract prerequisite
         run: npm --workspace @rewzio/api-contract run build
+      - name: Prepare Prisma test database
+        run: npm --workspace @rewzio/api run db:migrate:deploy
       - run: npm run typecheck
       - run: npm run build
+      - name: Start API for black-box tests
+        run: |
+          nohup node services/api/dist/server.js > /tmp/rewzio-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:3001/health && exit 0; sleep 1; done
+          cat /tmp/rewzio-api.log
+          exit 1
       - run: npm test
