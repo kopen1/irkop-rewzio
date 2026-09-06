@@ -1,78 +1,80 @@
-# Rewzio Staging Environment
+# Rewzio staging environment
+
+Staging is an isolated environment and MUST NOT share production data, Redis, credentials, payout providers, webhook endpoints, or secrets.
 
 ## Domains
 
-| Component | Staging hostname | Intended origin |
+| Component | Staging hostname | Expected upstream |
 |---|---|---|
-| API | `api.servicebusiness.eu.org` | staging API runtime |
-| Admin | `admin.servicebusiness.eu.org` | staging admin runtime |
-| Website | `rewzio.servicebusiness.eu.org` | staging website runtime |
-| CDN | `cdn.servicebusiness.eu.org` | staging CDN/runtime |
+| API | `api.servicebusiness.eu.org` | API :3001 |
+| Admin | `admin.servicebusiness.eu.org` | Admin :3000 |
+| Website | `rewzio.servicebusiness.eu.org` | Website :3002 |
+| CDN | `cdn.servicebusiness.eu.org` | CDN :8080 |
 
-These hostnames are staging-only. Production must use separate hostnames, data stores, credentials, and provider configuration.
+Cloudflare DNS should point these hostnames to the staging Cloudflare Tunnel. The tunnel ingress example is in `infrastructure/cloudflared/staging-config.example.yml`.
 
-## Required separation
+## Isolation requirements
 
-Staging MUST use:
+- `APP_ENV=staging` and `NODE_ENV=production` for the staging runtime.
+- Use a staging-only PostgreSQL database and a staging-only Redis instance.
+- Use staging-only `JWT_ACCESS_SECRET`, `OTP_SECRET`, OAuth credentials, and provider credentials.
+- `PAYOUT_MODE=MOCK` is mandatory for staging. Do not configure Duitku/Xendit payout credentials in staging.
+- Staging webhook URLs/signing material must be separate from production. Mock provider callbacks are used for staging validation.
+- Never copy production `.env` files, database dumps, Redis data, or provider credentials into staging.
 
-- a dedicated PostgreSQL database named/owned for staging;
-- a dedicated Redis instance or isolated Redis deployment;
-- staging-only JWT/OTP/application credentials;
-- `PAYOUT_MODE=MOCK`;
-- staging-only webhook endpoints/secrets;
-- `NODE_ENV=staging` and `APP_ENV=staging`;
-- `IS_DEMO=true` and `SOCIAL_PROOF_IS_DEMO=true` for demo/social-proof surfaces.
+## Demo data boundary
 
-Never point the staging stack at production PostgreSQL, Redis, payout providers, webhook credentials, or production secrets.
+Run `infrastructure/staging/seed-demo.mjs` only against the staging database. The seed creates an app with `Environment.STAGING` and demo settings including `is_demo=true` and `social_proof_is_demo=true`.
 
-## Local staging stack
+Demo rewards/content are explicitly named `STAGING DEMO` and carry `is_demo=true` metadata where the model supports metadata. Production reporting and social-proof queries must filter demo records out by environment/app boundary and `is_demo` metadata/flag.
 
-1. Copy `infrastructure/staging/.env.example` to a local, untracked staging env file.
-2. Replace only the staging placeholders.
-3. Start `infrastructure/staging/docker-compose.yml`.
-4. Apply the Prisma schema using the staging `DATABASE_URL`.
-5. Run `node infrastructure/staging/seed-demo.mjs`.
-6. Verify that the seeded `Apps.environment` is `STAGING` and the app settings contain `is_demo=true` and `payout_mode=MOCK`.
+## Start staging locally
 
-The staging stack uses named PostgreSQL and Redis volumes (`rewzio_staging_postgres`, `rewzio_staging_redis`) so local staging data is not mixed with the generic development compose stack.
+1. Copy `infrastructure/staging/.env.example` to a local, untracked `.env` file.
+2. Replace only the staging placeholders with staging-only values.
+3. Start the isolated stack:
 
-## Demo data safety
+```bash
+docker compose --env-file infrastructure/staging/.env -f infrastructure/staging/docker-compose.yml up -d --build
+```
 
-The seed uses an app with `Environment.STAGING`, an explicit `is_demo=true` setting, and demo metadata on seeded rewards. Social-proof code must consume the staging/demo flag rather than presenting demo activity as real production activity.
+4. Prepare the staging schema and seed demo data:
 
-There is no shared production database in this setup, so staging demo transactions cannot appear in production transactions unless an operator deliberately points staging credentials at production, which is prohibited.
+```bash
+docker compose --env-file infrastructure/staging/.env -f infrastructure/staging/docker-compose.yml exec api npx prisma db push --skip-generate
+docker compose --env-file infrastructure/staging/.env -f infrastructure/staging/docker-compose.yml exec api node infrastructure/staging/seed-demo.mjs
+```
+
+5. Run the staging smoke test:
+
+```bash
+node infrastructure/staging/e2e-local.mjs
+```
+
+6. Stop the environment when finished:
+
+```bash
+docker compose --env-file infrastructure/staging/.env -f infrastructure/staging/docker-compose.yml down
+```
 
 ## Cloudflare / Cloudflared
 
-Use the example ingress in `infrastructure/cloudflared/staging-config.example.yml`. The real tunnel ID and credentials file are external secrets and MUST NOT be committed.
+The repository contains configuration examples only. The real tunnel ID and credentials stay outside Git. Configure the four hostnames as separate ingress rules and route them only to staging services. Do not reuse a production tunnel credential.
 
-The expected ingress mapping is:
+## Public staging E2E
 
-- `api.servicebusiness.eu.org` → staging API on port `3001`
-- `admin.servicebusiness.eu.org` → staging Admin on port `3000`
-- `rewzio.servicebusiness.eu.org` → staging Website on port `3002`
-- `cdn.servicebusiness.eu.org` → staging CDN on port `8080`
-
-Cloudflare DNS records should target the staging Cloudflare Tunnel, not a production tunnel. Keep production tunnel credentials and DNS configuration separate.
-
-## Staging E2E smoke test
-
-Run:
-
-```bash
-node tests/e2e/staging-smoke.mjs
-```
-
-Optional environment overrides:
+After the DNS records and tunnel are configured, run:
 
 ```bash
 STAGING_API_URL=https://api.servicebusiness.eu.org \
 STAGING_ADMIN_URL=https://admin.servicebusiness.eu.org \
 STAGING_WEBSITE_URL=https://rewzio.servicebusiness.eu.org \
 STAGING_CDN_URL=https://cdn.servicebusiness.eu.org \
-node tests/e2e/staging-smoke.mjs
+node infrastructure/staging/e2e-public.mjs
 ```
 
-The smoke test verifies API health/API v1 plus HTTP reachability of Admin, Website, and CDN. It must be executed only after the staging endpoints are actually deployed and routed through Cloudflare.
+The public test is a smoke test only; it does not mutate production and does not require production credentials.
 
-At repository setup time these hostnames are documented targets; this commit does not connect or provision real Cloudflare infrastructure or production services.
+## Operational rule
+
+A staging transaction is never a production transaction. Keep separate database names, Redis instances, credentials, payout mode, webhook configuration, and environment flags at every layer.
