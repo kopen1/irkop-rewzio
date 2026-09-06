@@ -1,3 +1,1 @@
-<resources>
-    <style name="Theme.Rewzio" parent="android:style/Theme.Material.Light.NoActionBar" />
-</resources>
+<resources><style name="Theme.Rewzio" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:colorAccent">#3EA196</item></style></resources>
