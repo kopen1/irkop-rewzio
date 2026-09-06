@@ -1,0 +1,62 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    environment:
+      NODE_ENV: staging
+      APP_ENV: staging
+      APP_NAME: rewzio-staging
+      DATABASE_URL: postgresql://rewzio_staging:rewzio_staging@postgres:5432/rewzio_staging
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?staging JWT_ACCESS_SECRET is required}
+      OTP_SECRET: ${OTP_SECRET:?staging OTP_SECRET is required}
+      PAYOUT_MODE: MOCK
+      IS_DEMO: "true"
+      SOCIAL_PROOF_IS_DEMO: "true"
+      PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    networks: [rewzio-staging]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rewzio_staging
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?staging postgres password is required}
+      POSTGRES_DB: rewzio_staging
+    volumes:
+      - rewzio_staging_postgres:/var/lib/postgresql/data
+    networks: [rewzio-staging]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rewzio_staging -d rewzio_staging"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    volumes:
+      - rewzio_staging_redis:/data
+    networks: [rewzio-staging]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  rewzio-staging:
+    name: rewzio-staging
+
+volumes:
+  rewzio_staging_postgres:
+    name: rewzio_staging_postgres
+  rewzio_staging_redis:
+    name: rewzio_staging_redis
