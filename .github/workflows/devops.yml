@@ -1,0 +1,106 @@
+name: DevOps
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 22
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  quality:
+    name: Install / Lint / Typecheck / Unit / Integration / Build / Security
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rewzio_test
+          POSTGRES_PASSWORD: rewzio_test
+          POSTGRES_DB: rewzio_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rewzio_test -d rewzio_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://rewzio_test:rewzio_test@127.0.0.1:5432/rewzio_test
+      TEST_DATABASE_URL: postgresql://rewzio_test:rewzio_test@127.0.0.1:5432/rewzio_test
+      REDIS_URL: redis://127.0.0.1:6379
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      JWT_ACCESS_SECRET: ci-only-jwt-secret-012345678901234567890
+      OTP_SECRET: ci-only-otp-secret-012345678901234567890
+      GOOGLE_CLIENT_ID: ci-test-client.apps.googleusercontent.com
+      APP_NAME: rewzio-ci
+      PORT: 3001
+      CORS_ORIGIN: http://127.0.0.1:3001
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build shared package
+        run: npm --workspace @rewzio/shared run build
+      - name: Build API contract
+        run: npm --workspace @rewzio/api-contract run build
+      - name: Prepare integration database
+        run: npx --workspace @rewzio/api prisma db push --skip-generate
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests
+        run: npm run test:integration
+      - name: Build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Docker build
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: docker build -f infrastructure/docker/Dockerfile -t rewzio-api:${{ github.sha }} .
+
+  deploy-staging:
+    name: Deploy staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [quality, docker]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - run: echo "Staging deployment hook. Configure protected environment secrets and target runtime here."
+
+  deploy-production:
+    name: Deploy production
+    if: github.event_name == 'workflow_dispatch'
+    needs: [quality, docker]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Production deployment hook. Configure protected GitHub Secrets and target runtime here."
