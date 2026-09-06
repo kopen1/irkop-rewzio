@@ -1,0 +1,16 @@
+# STAGING EXAMPLE ONLY.
+# Store the real Cloudflare Tunnel credentials outside Git.
+# Replace service URLs with the actual staging runtimes before starting cloudflared.
+tunnel: <STAGING_TUNNEL_ID>
+credentials-file: /etc/cloudflared/<STAGING_TUNNEL_ID>.json
+
+ingress:
+  - hostname: api.servicebusiness.eu.org
+    service: http://127.0.0.1:3001
+  - hostname: admin.servicebusiness.eu.org
+    service: http://127.0.0.1:3000
+  - hostname: rewzio.servicebusiness.eu.org
+    service: http://127.0.0.1:3002
+  - hostname: cdn.servicebusiness.eu.org
+    service: http://127.0.0.1:8080
+  - service: http_status:404
