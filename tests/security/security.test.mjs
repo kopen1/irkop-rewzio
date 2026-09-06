@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const read = (p) => fs.readFileSync(p, 'utf8');
-const auth = read('services/api/src/middleware/authentication.ts');
+const auth = read('services/api/src/modules/auth/service.ts');
+const authMiddleware = read('services/api/src/middleware/authentication.ts');
 const reward = read('services/api/src/modules/rewards/engine.ts');
 const wallet = read('services/api/src/modules/wallet/service.ts');
 const payout = read('services/api/src/modules/payout/service.ts');
@@ -20,7 +21,7 @@ const securityCases = {
   fake_reward_amount: [/reward\.amount/, /clientAmountIgnored/],
   double_withdrawal: [/FOR UPDATE/, /pg_advisory_xact_lock/],
   duplicate_webhook: [/paymentWebhooks\.upsert/, /status === 'PROCESSED'/],
-  brute_force: [/OTP_MAX_ATTEMPTS/, /RATE_LIMITED/],
+  brute_force: [/OTP_MAX_ATTEMPTS=5/, /Too many verification attempts/],
   rate_limit_bypass: [/incrementWithExpiry/],
   sql_injection: [/\$queryRaw/, /\$transaction/],
   malicious_payload: [/redactPayload/, /redactMetadata/],
@@ -30,7 +31,7 @@ const securityCases = {
 
 test('critical security invariants are enforced', () => {
   for (const [name, patterns] of Object.entries(securityCases)) {
-    const corpus = name.includes('withdrawal') || name.includes('financial') ? `${wallet}\n${payout}` : name.includes('reward') || name === 'replay' ? `${reward}\n${wallet}` : name.includes('authorization') || name.includes('privilege') ? `${auth}\n${admin}\n${routes}` : name === 'IDOR' ? `${auth}\n${routes}\n${wallet}` : name.includes('webhook') ? payout : name.includes('brute') || name.includes('authentication') || name.includes('rate') ? `${auth}\n${reward}` : `${auth}\n${reward}\n${fraud}\n${payout}`;
+    const corpus = name.includes('withdrawal') || name.includes('financial') ? `${wallet}\n${payout}` : name.includes('reward') || name === 'replay' ? `${reward}\n${wallet}` : name.includes('authorization') || name.includes('privilege') ? `${authMiddleware}\n${admin}\n${routes}` : name === 'IDOR' ? `${authMiddleware}\n${routes}\n${wallet}` : name.includes('brute') || name.includes('authentication') || name.includes('rate') ? `${auth}\n${authMiddleware}\n${reward}` : name.includes('webhook') ? payout : `${auth}\n${reward}\n${fraud}\n${payout}`;
     for (const pattern of patterns) assert.match(corpus, pattern, `${name} invariant missing: ${pattern}`);
   }
 });
