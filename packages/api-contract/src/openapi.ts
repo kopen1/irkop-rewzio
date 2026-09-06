@@ -1,3 +1,5 @@
+const errorRef = { description:'Error', content:{'application/json':{schema:{'$ref':'#/components/schemas/ApiError'}}} };
+
 export const openapiDocument = {
   openapi: '3.0.3',
   info: { title: 'Rewzio API', version: '0.1.0', description: 'Canonical API contract for Rewzio Android, Admin and backend integrations.' },
@@ -92,4 +94,3 @@ function op(tag:string, summary:string, requestBody?:unknown, params?:string[], 
   if (params) out.parameters=params.map(name=>({name,in:'path',required:true,schema:{type:'string'}}));
   return out;
 }
-const errorRef = { description:'Error', content:{'application/json':{schema:{'$ref':'#/components/schemas/ApiError'}}} };
