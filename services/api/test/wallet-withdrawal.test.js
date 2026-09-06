@@ -21,7 +21,11 @@ function dbStub({ coins = 2_000_000n, capacity = undefined } = {}) {
   const db = {
     appSettings: { findUnique: async () => capacity ? { value: capacity } : null },
     withdrawalMethods: { findFirst: async () => ({ id: 'm1', status: 'VERIFIED' }) },
-    userSessions: { findUnique: async () => ({ id: 's1', status: 'ACTIVE', ipAddress: '10.0.0.1' }), count: async () => 1 },
+    userSessions: {
+      findUnique: async () => ({ id: 's1', status: 'ACTIVE', ipAddress: '10.0.0.1' }),
+      count: async () => 1,
+      findMany: async () => [{ userId: 'u1' }],
+    },
     withdrawals: {
       findUnique: async ({ where }) => state.withdrawals.get(where.idempotencyKey) ?? null,
       count: async () => 0,
