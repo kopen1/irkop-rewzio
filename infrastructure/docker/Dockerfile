@@ -7,8 +7,8 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/api-contract/package.json packages/api-contract/package.json
 RUN npm ci
 COPY . .
-RUN npx --workspace @rewzio/api prisma generate
 RUN npm --workspace @rewzio/shared run build && npm --workspace @rewzio/api-contract run build && npm --workspace @rewzio/api run build
+RUN npx --workspace @rewzio/api prisma generate
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
