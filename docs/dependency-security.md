@@ -2,10 +2,10 @@
 
 The CI dependency audit remains enforced at `high` severity.
 
-Security remediation is pinned through root npm `overrides` for vulnerable transitive dependencies until their parent packages publish compatible dependency ranges:
+Current remediations use direct dependency ranges so the committed lockfile remains reproducible with `npm ci`:
 
-- `@fastify/static` >= 10.1.2
-- `deepmerge-ts` >= 8.0.0
-- `postcss` >= 8.5.10
+- `@fastify/swagger-ui` >= 6.1.1
+- Prisma CLI/client pinned to the audited-safe 6.12.x line
+- `postcss` >= 8.5.27
 
-The lockfile is generated with these overrides and `npm ci` remains the installation command used by CI.
+No audit threshold is lowered and no security check is disabled.
