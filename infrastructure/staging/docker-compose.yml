@@ -31,6 +31,8 @@ services:
       POSTGRES_USER: rewzio_staging
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?staging postgres password is required}
       POSTGRES_DB: rewzio_staging
+    ports:
+      - "55432:5432"
     volumes:
       - rewzio_staging_postgres:/var/lib/postgresql/data
     networks: [rewzio-staging]
@@ -42,6 +44,8 @@ services:
 
   redis:
     image: redis:7
+    ports:
+      - "56379:6379"
     volumes:
       - rewzio_staging_redis:/data
     networks: [rewzio-staging]
