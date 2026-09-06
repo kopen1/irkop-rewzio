@@ -1,0 +1,71 @@
+name: Staging E2E
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: 22
+
+permissions:
+  contents: read
+
+jobs:
+  staging-e2e:
+    name: Isolated staging stack E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start isolated staging stack
+        env:
+          POSTGRES_PASSWORD: staging-ci-only-password
+          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret
+          OTP_SECRET: staging-ci-only-otp-secret
+        run: docker compose -f infrastructure/staging/docker-compose.yml up -d --build
+
+      - name: Prepare staging database
+        env:
+          DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
+        run: npx --workspace @rewzio/api prisma db push --skip-generate
+
+      - name: Seed staging demo data
+        env:
+          DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
+        run: node infrastructure/staging/seed-demo.mjs
+
+      - name: Run API staging E2E smoke
+        env:
+          STAGING_API_URL: http://127.0.0.1:3001
+          STAGING_ADMIN_URL: http://127.0.0.1:3001
+          STAGING_WEBSITE_URL: http://127.0.0.1:3001
+          STAGING_CDN_URL: http://127.0.0.1:3001
+        run: node tests/e2e/staging-smoke.mjs
+
+      - name: Verify staging-only configuration
+        env:
+          DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
+        run: |
+          node --input-type=module <<'NODE'
+          import { PrismaClient } from '@prisma/client';
+          const prisma = new PrismaClient();
+          const app = await prisma.apps.findUnique({ where: { slug: 'rewzio-staging' } });
+          if (!app || app.environment !== 'STAGING') throw new Error('staging app/environment check failed');
+          const settings = await prisma.appSettings.findMany({ where: { appId: app.id, key: { in: ['is_demo', 'social_proof_is_demo', 'payout_mode'] } } });
+          const map = Object.fromEntries(settings.map((item) => [item.key, item.value]));
+          if (map.is_demo !== true || map.social_proof_is_demo !== true || map.payout_mode !== 'MOCK') throw new Error('staging demo/payout flags are incorrect');
+          console.log('STAGING CONFIG PASS');
+          await prisma.$disconnect();
+          NODE
+
+      - name: Stop staging stack
+        if: always()
+        run: docker compose -f infrastructure/staging/docker-compose.yml down -v
