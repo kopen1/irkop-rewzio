@@ -1,140 +1,17 @@
 import type { Env } from '../worker.js';
 
-const ACCESS_TTL = 900;
-const REFRESH_TTL = 2_592_000;
-const OTP_TTL = 300;
-const OTP_MAX_ATTEMPTS = 5;
-
-export interface AuthConfig {
-  jwtAccessSecret: string;
-  otpSecret: string;
-  googleClientId: string;
-}
-
-export interface AuthResult {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  user: { id: string; phone: string | null; status: string };
-}
-
-const enc = new TextEncoder();
-
-async function hmac(secret: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const bytes = await crypto.subtle.sign('HMAC', key, enc.encode(value));
-  return base64url(new Uint8Array(bytes));
-}
-
-async function sha256(value: string): Promise<string> {
-  const bytes = await crypto.subtle.digest('SHA-256', enc.encode(value));
-  return hex(new Uint8Array(bytes));
-}
-
-function base64url(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function jsonb(value: unknown): string { return base64url(enc.encode(JSON.stringify(value))); }
-function randomHex(bytes: number): string { const a = new Uint8Array(bytes); crypto.getRandomValues(a); return hex(a); }
-function hex(a: Uint8Array): string { return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); }
-function now(): string { return new Date().toISOString(); }
-function normalizePhone(phone: string): string {
-  const v = phone.replace(/[\s()-]/g, '');
-  if (!/^\+?[1-9]\d{7,14}$/.test(v)) throw error('INVALID_PHONE', 'Invalid phone number', 400);
-  return v.startsWith('+') ? v : `+${v}`;
-}
-function error(code: string, message: string, status = 401): Error & { statusCode: number; code: string } {
-  const e = new Error(message) as Error & { statusCode: number; code: string }; e.statusCode = status; e.code = code; return e;
-}
-
-export async function requestOtp(env: Env, config: AuthConfig, appId: string, phone: string, ip?: string): Promise<void> {
-  const normalized = normalizePhone(phone);
-  const code = String(100000 + crypto.getRandomValues(new Uint32Array(1))[0] % 900000);
-  const codeHash = await hmac(config.otpSecret, code);
-  const id = randomHex(16);
-  await env.DB.prepare(`INSERT INTO otp_requests (id,app_id,phone,purpose,code_hash,status,attempts,expires_at,ip_address,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(id, appId, normalized, 'LOGIN', codeHash, 'PENDING', 0, new Date(Date.now() + OTP_TTL * 1000).toISOString(), ip ?? null, now(), now()).run();
-  // Delivery is intentionally delegated to the configured edge/provider integration.
-  // Never log the OTP or persist it in plaintext.
-}
-
-export async function verifyOtp(env: Env, config: AuthConfig, appId: string, phone: string, code: string, ip?: string): Promise<AuthResult> {
-  const normalized = normalizePhone(phone);
-  const row = await env.DB.prepare(`SELECT * FROM otp_requests WHERE app_id=? AND phone=? AND purpose='LOGIN' AND status='PENDING' ORDER BY created_at DESC LIMIT 1`).bind(appId, normalized).first<Record<string, unknown>>();
-  if (!row) throw error('INVALID_OTP', 'Invalid or expired OTP');
-  const id = String(row.id);
-  const expires = Date.parse(String(row.expires_at));
-  const attempts = Number(row.attempts ?? 0);
-  if (expires <= Date.now()) { await env.DB.prepare(`UPDATE otp_requests SET status='EXPIRED',updated_at=? WHERE id=?`).bind(now(), id).run(); throw error('OTP_EXPIRED', 'Invalid or expired OTP'); }
-  if (attempts >= OTP_MAX_ATTEMPTS) { throw error('OTP_LOCKED', 'Too many verification attempts'); }
-  const expected = await hmac(config.otpSecret, code);
-  if (expected !== String(row.code_hash)) {
-    const next = attempts + 1;
-    await env.DB.prepare(`UPDATE otp_requests SET attempts=?,status=?,updated_at=? WHERE id=?`).bind(next, next >= OTP_MAX_ATTEMPTS ? 'LOCKED' : 'PENDING', now(), id).run();
-    throw error(next >= OTP_MAX_ATTEMPTS ? 'OTP_LOCKED' : 'INVALID_OTP', next >= OTP_MAX_ATTEMPTS ? 'Too many verification attempts' : 'Invalid or expired OTP');
-  }
-  let user = await env.DB.prepare(`SELECT id,phone,status FROM users WHERE phone=? LIMIT 1`).bind(normalized).first<{id:string;phone:string|null;status:string}>();
-  if (!user) {
-    const userId = randomHex(16);
-    await env.DB.prepare(`INSERT INTO users (id,phone,phone_verified_at,status,referral_code,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`).bind(userId, normalized, now(), 'ACTIVE', randomHex(8), now(), now()).run();
-    user = { id: userId, phone: normalized, status: 'ACTIVE' };
-  }
-  if (user.status !== 'ACTIVE') throw error('ACCOUNT_SUSPENDED', 'Account is suspended', 403);
-  await env.DB.prepare(`UPDATE otp_requests SET status='VERIFIED',consumed_at=?,updated_at=? WHERE id=?`).bind(now(), now(), id).run();
-  await env.DB.prepare(`INSERT INTO user_apps (id,app_id,user_id,status,first_seen_at,last_seen_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(app_id,user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at`).bind(randomHex(16), appId, user.id, 'ACTIVE', now(), now(), now(), now()).run();
-  await env.DB.prepare(`UPDATE users SET phone_verified_at=?,last_login_at=?,updated_at=? WHERE id=?`).bind(now(), now(), now(), user.id).run();
-  return issueSession(env, config, appId, user.id, user.phone, ip);
-}
-
-export async function refresh(env: Env, config: AuthConfig, appId: string, raw: string): Promise<AuthResult> {
-  const hash = await sha256(raw);
-  const token = await env.DB.prepare(`SELECT * FROM refresh_tokens WHERE token_hash=? LIMIT 1`).bind(hash).first<Record<string, unknown>>();
-  if (!token || token.revoked_at || Date.parse(String(token.expires_at)) <= Date.now() || String(token.app_id) !== appId) throw error('INVALID_REFRESH_TOKEN', 'Invalid refresh token');
-  const user = await env.DB.prepare(`SELECT id,phone,status FROM users WHERE id=?`).bind(String(token.user_id)).first<{id:string;phone:string|null;status:string}>();
-  if (!user || user.status !== 'ACTIVE') throw error('INVALID_REFRESH_TOKEN', 'Invalid refresh token');
-  const nextRaw = randomHex(48);
-  const nextHash = await sha256(nextRaw);
-  const t = now();
-  const result = await env.DB.batch([
-    env.DB.prepare(`UPDATE refresh_tokens SET revoked_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL`).bind(t,t,String(token.id)),
-    env.DB.prepare(`INSERT INTO refresh_tokens (id,app_id,user_id,session_id,token_hash,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).bind(randomHex(16),appId,user.id,String(token.session_id ?? '' ) || null,nextHash,new Date(Date.now()+REFRESH_TTL*1000).toISOString(),t,t),
-  ]);
-  if ((result[0]?.meta.changes ?? 0) !== 1) throw error('INVALID_REFRESH_TOKEN', 'Invalid refresh token');
-  return { accessToken: await accessToken(config.jwtAccessSecret,user.id,appId,String(token.session_id ?? '')), refreshToken: nextRaw, expiresIn: ACCESS_TTL, user };
-}
-
-async function issueSession(env: Env, config: AuthConfig, appId: string, userId: string, phone: string|null, ip?: string): Promise<AuthResult> {
-  const sessionId = randomHex(16), raw = randomHex(48), tokenHash = await sha256(raw), t = now(), expires = new Date(Date.now()+REFRESH_TTL*1000).toISOString();
-  await env.DB.batch([
-    env.DB.prepare(`INSERT INTO user_sessions (id,app_id,user_id,token_hash,status,expires_at,last_seen_at,ip_address,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(sessionId,appId,userId,tokenHash,'ACTIVE',expires,t,ip ?? null,t,t),
-    env.DB.prepare(`INSERT INTO refresh_tokens (id,app_id,user_id,session_id,token_hash,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`).bind(randomHex(16),appId,userId,sessionId,tokenHash,expires,t,t),
-  ]);
-  return { accessToken: await accessToken(config.jwtAccessSecret,userId,appId,sessionId), refreshToken: raw, expiresIn: ACCESS_TTL, user: { id:userId, phone, status:'ACTIVE' } };
-}
-
-async function accessToken(secret: string, userId: string, appId: string, sessionId: string): Promise<string> {
-  const iat = Math.floor(Date.now()/1000);
-  const input = `${jsonb({alg:'HS256',typ:'JWT'})}.${jsonb({sub:userId,appId,sid:sessionId,iat,exp:iat+ACCESS_TTL})}`;
-  return `${input}.${await hmac(secret,input)}`;
-}
-
-export async function googleLogin(env: Env, config: AuthConfig, appId: string, idToken: string, ip?: string): Promise<AuthResult> {
-  const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
-  if (!response.ok) throw error('INVALID_GOOGLE_TOKEN','Invalid Google credential');
-  const data = await response.json() as {aud?:string;sub?:string;email_verified?:boolean|string};
-  if (data.aud !== config.googleClientId || !data.sub || (data.email_verified !== true && data.email_verified !== 'true')) throw error('INVALID_GOOGLE_TOKEN','Invalid Google credential');
-  let user = await env.DB.prepare(`SELECT id,phone,status FROM users WHERE google_subject=? LIMIT 1`).bind(data.sub).first<{id:string;phone:string|null;status:string}>();
-  if (!user) { const id=randomHex(16); await env.DB.prepare(`INSERT INTO users (id,google_subject,status,referral_code,created_at,updated_at) VALUES (?,?,?,?,?,?)`).bind(id,data.sub,'ACTIVE',randomHex(8),now(),now()).run(); user={id,phone:null,status:'ACTIVE'}; }
-  if (user.status !== 'ACTIVE') throw error('ACCOUNT_SUSPENDED','Account is suspended',403);
-  const t=now(); await env.DB.prepare(`INSERT INTO user_apps (id,app_id,user_id,status,first_seen_at,last_seen_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(app_id,user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at`).bind(randomHex(16),appId,user.id,'ACTIVE',t,t,t,t).run();
-  return issueSession(env,config,appId,user.id,user.phone,ip);
-}
-
-export async function logout(env: Env, raw: string): Promise<void> {
-  const hash=await sha256(raw); const token=await env.DB.prepare(`SELECT id,session_id FROM refresh_tokens WHERE token_hash=?`).bind(hash).first<{id:string;session_id:string|null}>();
-  if (!token) return; const t=now(); const statements=[env.DB.prepare(`UPDATE refresh_tokens SET revoked_at=?,updated_at=? WHERE id=?`).bind(t,t,token.id)];
-  if (token.session_id) statements.push(env.DB.prepare(`UPDATE user_sessions SET status='REVOKED',revoked_at=?,updated_at=? WHERE id=?`).bind(t,t,token.session_id)); await env.DB.batch(statements);
-}
+const ACCESS_TTL=900,REFRESH_TTL=2592000,OTP_TTL=300,OTP_MAX_ATTEMPTS=5; const enc=new TextEncoder();
+export interface AuthConfig{jwtAccessSecret:string;otpSecret:string;googleClientId:string;}
+export interface AuthResult{accessToken:string;refreshToken:string;expiresIn:number;user:{id:string;phone:string|null;status:string};}
+async function hmac(secret:string,value:string):Promise<string>{const k=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return base64url(new Uint8Array(await crypto.subtle.sign('HMAC',k,enc.encode(value))));}
+async function sha256(value:string):Promise<string>{return hex(new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(value))));}
+function base64url(bytes:Uint8Array):string{let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');}
+function jsonb(v:unknown):string{return base64url(enc.encode(JSON.stringify(v)));} function randomHex(n:number):string{const a=new Uint8Array(n);crypto.getRandomValues(a);return hex(a);} function hex(a:Uint8Array):string{return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');} function now():string{return new Date().toISOString();}
+function err(code:string,message:string,status=401):Error&{statusCode:number;code:string}{const e=Object.assign(new Error(message),{statusCode:status,code});return e;} function requiredPhone(v:string):string{const p=v.replace(/[\s()-]/g,'');if(!/^\+?[1-9]\d{7,14}$/.test(p))throw err('INVALID_PHONE','Invalid phone number',400);return p.startsWith('+')?p:`+${p}`;}
+export async function requestOtp(env:Env,c:AuthConfig,appId:string,phone:string,ip?:string):Promise<void>{const p=requiredPhone(phone),code=String(100000+crypto.getRandomValues(new Uint32Array(1))[0]%900000),t=now();await env.DB.prepare(`INSERT INTO otp_requests (id,appId,phone,purpose,codeHash,status,attempts,expiresAt,ipAddress,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).bind(randomHex(16),appId,p,'LOGIN',await hmac(c.otpSecret,code),'PENDING',0,new Date(Date.now()+OTP_TTL*1000).toISOString(),ip??null,t,t).run();}
+export async function verifyOtp(env:Env,c:AuthConfig,appId:string,phone:string,code:string,ip?:string):Promise<AuthResult>{const p=requiredPhone(phone),r=await env.DB.prepare(`SELECT * FROM otp_requests WHERE appId=? AND phone=? AND purpose='LOGIN' AND status='PENDING' ORDER BY createdAt DESC LIMIT 1`).bind(appId,p).first<Record<string,unknown>>();if(!r)throw err('INVALID_OTP','Invalid or expired OTP');const id=String(r.id),attempts=Number(r.attempts??0);if(Date.parse(String(r.expiresAt))<=Date.now()){await env.DB.prepare(`UPDATE otp_requests SET status='EXPIRED',updatedAt=? WHERE id=?`).bind(now(),id).run();throw err('OTP_EXPIRED','Invalid or expired OTP');}if(attempts>=OTP_MAX_ATTEMPTS)throw err('OTP_LOCKED','Too many verification attempts');if(await hmac(c.otpSecret,code)!==String(r.codeHash)){const n=attempts+1;await env.DB.prepare(`UPDATE otp_requests SET attempts=?,status=?,updatedAt=? WHERE id=?`).bind(n,n>=OTP_MAX_ATTEMPTS?'LOCKED':'PENDING',now(),id).run();throw err(n>=OTP_MAX_ATTEMPTS?'OTP_LOCKED':'INVALID_OTP',n>=OTP_MAX_ATTEMPTS?'Too many verification attempts':'Invalid or expired OTP');}let u=await env.DB.prepare(`SELECT id,phone,status FROM users WHERE phone=? LIMIT 1`).bind(p).first<{id:string;phone:string|null;status:string}>();if(!u){const id2=randomHex(16),t=now();await env.DB.prepare(`INSERT INTO users (id,phone,phoneVerifiedAt,status,referralCode,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?)`).bind(id2,p,t,'ACTIVE',randomHex(8),t,t).run();u={id:id2,phone:p,status:'ACTIVE'};}if(u.status!=='ACTIVE')throw err('ACCOUNT_SUSPENDED','Account is suspended',403);const t=now();await env.DB.batch([env.DB.prepare(`UPDATE otp_requests SET status='VERIFIED',consumedAt=?,updatedAt=? WHERE id=?`).bind(t,t,id),env.DB.prepare(`INSERT INTO user_apps (id,appId,userId,status,firstSeenAt,lastSeenAt,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(appId,userId) DO UPDATE SET lastSeenAt=excluded.lastSeenAt,updatedAt=excluded.updatedAt`).bind(randomHex(16),appId,u.id,'ACTIVE',t,t,t,t),env.DB.prepare(`UPDATE users SET phoneVerifiedAt=?,lastLoginAt=?,updatedAt=? WHERE id=?`).bind(t,t,t,u.id)]);return issueSession(env,c,appId,u.id,u.phone,ip);}
+async function issueSession(env:Env,c:AuthConfig,appId:string,userId:string,phone:string|null,ip?:string):Promise<AuthResult>{const sid=randomHex(16),raw=randomHex(48),hash=await sha256(raw),t=now(),expires=new Date(Date.now()+REFRESH_TTL*1000).toISOString();await env.DB.batch([env.DB.prepare(`INSERT INTO user_sessions (id,appId,userId,tokenHash,status,expiresAt,lastSeenAt,ipAddress,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(sid,appId,userId,hash,'ACTIVE',expires,t,ip??null,t,t),env.DB.prepare(`INSERT INTO refresh_tokens (id,appId,userId,sessionId,tokenHash,expiresAt,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?)`).bind(randomHex(16),appId,userId,sid,hash,expires,t,t)]);return{accessToken:await accessToken(c.jwtAccessSecret,userId,appId,sid),refreshToken:raw,expiresIn:ACCESS_TTL,user:{id:userId,phone,status:'ACTIVE'}};}
+async function accessToken(secret:string,userId:string,appId:string,sid:string):Promise<string>{const iat=Math.floor(Date.now()/1000),input=`${jsonb({alg:'HS256',typ:'JWT'})}.${jsonb({sub:userId,appId,sid,iat,exp:iat+ACCESS_TTL})}`;return`${input}.${await hmac(secret,input)}`;}
+export async function refresh(env:Env,c:AuthConfig,appId:string,raw:string):Promise<AuthResult>{const hash=await sha256(raw),r=await env.DB.prepare(`SELECT * FROM refresh_tokens WHERE tokenHash=? LIMIT 1`).bind(hash).first<Record<string,unknown>>();if(!r||r.revokedAt||Date.parse(String(r.expiresAt))<=Date.now()||String(r.appId)!==appId)throw err('INVALID_REFRESH_TOKEN','Invalid refresh token');const u=await env.DB.prepare(`SELECT id,phone,status FROM users WHERE id=?`).bind(String(r.userId)).first<{id:string;phone:string|null;status:string}>();if(!u||u.status!=='ACTIVE')throw err('INVALID_REFRESH_TOKEN','Invalid refresh token');const next=randomHex(48),nh=await sha256(next),t=now(),results=await env.DB.batch([env.DB.prepare(`UPDATE refresh_tokens SET revokedAt=?,updatedAt=? WHERE id=? AND revokedAt IS NULL`).bind(t,t,String(r.id)),env.DB.prepare(`INSERT INTO refresh_tokens (id,appId,userId,sessionId,tokenHash,expiresAt,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?)`).bind(randomHex(16),appId,u.id,String(r.sessionId??'')||null,nh,new Date(Date.now()+REFRESH_TTL*1000).toISOString(),t,t)]);if((results[0]?.meta.changes??0)!==1)throw err('INVALID_REFRESH_TOKEN','Invalid refresh token');return{accessToken:await accessToken(c.jwtAccessSecret,u.id,appId,String(r.sessionId??'')),refreshToken:next,expiresIn:ACCESS_TTL,user:u};}
+export async function googleLogin(env:Env,c:AuthConfig,appId:string,idToken:string,ip?:string):Promise<AuthResult>{const res=await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);if(!res.ok)throw err('INVALID_GOOGLE_TOKEN','Invalid Google credential');const d=await res.json() as{aud?:string;sub?:string;email_verified?:boolean|string};if(d.aud!==c.googleClientId||!d.sub||(d.email_verified!==true&&d.email_verified!=='true'))throw err('INVALID_GOOGLE_TOKEN','Invalid Google credential');let u=await env.DB.prepare(`SELECT id,phone,status FROM users WHERE googleSubject=? LIMIT 1`).bind(d.sub).first<{id:string;phone:string|null;status:string}>();if(!u){const id=randomHex(16),t=now();await env.DB.prepare(`INSERT INTO users (id,googleSubject,status,referralCode,createdAt,updatedAt) VALUES (?,?,?,?,?,?)`).bind(id,d.sub,'ACTIVE',randomHex(8),t,t).run();u={id,phone:null,status:'ACTIVE'};}if(u.status!=='ACTIVE')throw err('ACCOUNT_SUSPENDED','Account is suspended',403);const t=now();await env.DB.prepare(`INSERT INTO user_apps (id,appId,userId,status,firstSeenAt,lastSeenAt,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(appId,userId) DO UPDATE SET lastSeenAt=excluded.lastSeenAt,updatedAt=excluded.updatedAt`).bind(randomHex(16),appId,u.id,'ACTIVE',t,t,t,t).run();return issueSession(env,c,appId,u.id,u.phone,ip);}
+export async function logout(env:Env,raw:string):Promise<void>{const h=await sha256(raw),r=await env.DB.prepare(`SELECT id,sessionId FROM refresh_tokens WHERE tokenHash=?`).bind(h).first<{id:string;sessionId:string|null}>();if(!r)return;const t=now(),s=[env.DB.prepare(`UPDATE refresh_tokens SET revokedAt=?,updatedAt=? WHERE id=?`).bind(t,t,r.id)];if(r.sessionId)s.push(env.DB.prepare(`UPDATE user_sessions SET status='REVOKED',revokedAt=?,updatedAt=? WHERE id=?`).bind(t,t,r.sessionId));await env.DB.batch(s);}
