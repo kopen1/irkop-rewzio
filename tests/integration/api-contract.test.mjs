@@ -34,5 +34,5 @@ test('wallet, withdrawal and webhook routes are wired', () => {
 test('standard success and error envelopes are canonical', () => {
   const response = fs.readFileSync('services/api/src/middleware/response.ts', 'utf8');
   assert.match(response, /success: true/); assert.match(response, /data: T/); assert.match(response, /message: string \| null/);
-  assert.match(contract, /success: false/); assert.match(contract, /ErrorBody/);
+  assert.match(contract, /enum: \[false\]/); assert.match(contract, /ErrorBody/);
 });
