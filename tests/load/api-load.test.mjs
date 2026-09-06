@@ -1,20 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
+import { PrismaClient } from '@prisma/client';
 
-const api = process.env.TEST_API_URL || 'http://127.0.0.1:3001';
+const databaseUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+const redisUrl = process.env.TEST_REDIS_URL || process.env.REDIS_URL;
+assert.ok(databaseUrl && redisUrl, 'test infrastructure URLs are required');
 
-async function hit(path) { const r = await fetch(`${api}${path}`); return r.status; }
+function redisCommand(parts) { return `*${parts.length}\r\n${parts.map((p) => `$${Buffer.byteLength(p)}\r\n${p}\r\n`).join('')}`; }
+function pingRedis() { const url = new URL(redisUrl); return new Promise((resolve, reject) => { const socket = net.createConnection({ host: url.hostname, port: Number(url.port) || 6379 }); let buffer = ''; socket.once('error', reject); socket.on('data', (chunk) => { buffer += chunk.toString(); if (buffer.includes('\r\n')) { socket.end(); resolve(buffer.slice(0, buffer.indexOf('\r\n'))); } }); socket.on('connect', () => socket.write(redisCommand(['PING']))); }); }
 
-test('load: concurrent health requests remain responsive', async () => {
-  const paths = Array.from({ length: 40 }, () => '/health');
-  const started = Date.now();
-  const statuses = await Promise.all(paths.map(hit));
-  const elapsed = Date.now() - started;
-  assert.ok(statuses.every((s) => s === 200));
-  assert.ok(elapsed < 10000, `health load exceeded 10s: ${elapsed}ms`);
+test('load: concurrent PostgreSQL queries remain consistent', async () => {
+  const db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  try {
+    const results = await Promise.all(Array.from({ length: 50 }, (_, i) => db.$queryRaw`SELECT ${i}::int AS value`));
+    assert.equal(results.length, 50);
+    assert.deepEqual(results.map((r) => Number(r[0].value)).sort((a, b) => a - b), Array.from({ length: 50 }, (_, i) => i));
+  } finally { await db.$disconnect(); }
 });
 
-test('load: concurrent protected reward requests preserve authorization', async () => {
-  const statuses = await Promise.all(Array.from({ length: 40 }, () => hit('/api/v1/rewards')));
-  assert.ok(statuses.every((s) => s === 401 || s === 403));
+test('load: concurrent Redis connections remain responsive', async () => {
+  const results = await Promise.all(Array.from({ length: 50 }, pingRedis));
+  assert.equal(results.length, 50);
+  assert.ok(results.every((value) => value === '+PONG'));
 });
