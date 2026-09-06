@@ -50,7 +50,9 @@ jobs:
           DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
         run: |
           node --input-type=module <<'NODE'
-          import { PrismaClient } from '@prisma/client';
+          import { createRequire } from 'node:module';
+          const require = createRequire(new URL('./services/api/package.json', import.meta.url));
+          const { PrismaClient } = require('@prisma/client');
           const prisma = new PrismaClient();
           const app = await prisma.apps.findUnique({ where: { slug: 'rewzio-staging' } });
           if (!app || app.environment !== 'STAGING') throw new Error('staging app/environment check failed');
@@ -63,4 +65,8 @@ jobs:
 
       - name: Stop staging stack
         if: always()
+        env:
+          POSTGRES_PASSWORD: staging-ci-only-password
+          JWT_ACCESS_SECRET: staging-ci-only-jwt-secret
+          OTP_SECRET: staging-ci-only-otp-secret
         run: docker compose -f infrastructure/staging/docker-compose.yml down -v
