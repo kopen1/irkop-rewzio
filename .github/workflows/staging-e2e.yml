@@ -37,6 +37,9 @@ jobs:
           DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
         run: npx --workspace @rewzio/api prisma db push --skip-generate
 
+      - name: Generate Prisma client for staging seed
+        run: npx --workspace @rewzio/api prisma generate
+
       - name: Seed staging demo data
         env:
           DATABASE_URL: postgresql://rewzio_staging:staging-ci-only-password@127.0.0.1:55432/rewzio_staging
