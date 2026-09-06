@@ -15,7 +15,7 @@ type Capacity = { max_wd_users_per_day: number; max_wd_transactions_per_day: num
 export class WalletWithdrawalService {
   private readonly fraud: FraudRiskEngine;
   constructor(private readonly db: PrismaClient, redis: RedisConnection) { this.fraud = new FraudRiskEngine(db, redis); }
-  async getWallet(appId: string, userId: string) { return this.db.$transaction(async (tx) => this.syncWalletInTransaction(tx, appId, userId)); }
+  async getWallet(appId: string, userId: string) { return this.db.$transaction(async (tx: Tx) => this.syncWalletInTransaction(tx, appId, userId)); }
   async listWithdrawals(appId: string, userId: string, history = false) { return this.db.withdrawals.findMany({ where: history ? { appId, userId } : { appId, userId, status: { in: COUNTED_STATUSES } }, orderBy: { createdAt: 'desc' }, take: 100 }); }
   async getWithdrawal(appId: string, userId: string, id: string) { const withdrawal = await this.db.withdrawals.findFirst({ where: { appId, userId, id } }); if (!withdrawal) throw error(404, 'WITHDRAWAL_NOT_FOUND', 'Withdrawal not found'); return withdrawal; }
   async requestWithdrawal(input: { appId: string; userId: string; sessionId: string; methodId: string; amount: bigint; idempotencyKey: string; ipAddress?: string; deviceId?: string }) {
@@ -29,7 +29,7 @@ export class WalletWithdrawalService {
     const session = await this.db.userSessions.findUnique({ where: { id: input.sessionId } });
     const risk = await this.fraud.assess({ appId: input.appId, userId: input.userId, sessionId: input.sessionId, deviceId: input.deviceId, ipAddress: input.ipAddress ?? session?.ipAddress ?? undefined, eventType: 'withdrawal' });
     const capacity = await this.loadCapacity(input.appId);
-    return this.db.$transaction(async (tx) => {
+    return this.db.$transaction(async (tx: Tx) => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`withdrawal:${input.appId}`}, 0))`;
       const lockedAccounts = await tx.$queryRaw<Array<{ balance: bigint }>>`SELECT "balance" FROM "coin_accounts" WHERE "appId" = ${input.appId} AND "userId" = ${input.userId} FOR UPDATE`;
       const account = lockedAccounts[0]; if (!account) throw error(400, 'WALLET_NOT_INITIALIZED', 'Wallet has no coin account');
@@ -39,7 +39,7 @@ export class WalletWithdrawalService {
       if (capacity.enable_daily_limit) {
         const window = dailyWindow(capacity.reset_time);
         const rows = await tx.withdrawals.findMany({ where: { appId: input.appId, createdAt: { gte: window.start, lt: window.end }, status: { in: COUNTED_STATUSES } }, select: { userId: true, amount: true } });
-        const userRows = rows.filter((row) => row.userId === input.userId); const total = sumAmounts(rows); const userTotal = sumAmounts(userRows); const users = new Set(rows.map((row) => row.userId));
+        const userRows = rows.filter((row: { userId: string }) => row.userId === input.userId); const total = sumAmounts(rows); const userTotal = sumAmounts(userRows); const users = new Set(rows.map((row: { userId: string }) => row.userId));
         if (capacity.max_wd_transactions_per_day > 0 && rows.length >= capacity.max_wd_transactions_per_day) return this.createLockedWithdrawal(tx, input, wallet, available, 'PENDING_CAPACITY', risk.score);
         if (capacity.max_wd_users_per_day > 0 && users.size >= capacity.max_wd_users_per_day && !users.has(input.userId)) return this.createLockedWithdrawal(tx, input, wallet, available, 'PENDING_CAPACITY', risk.score);
         if (capacity.max_payout_amount_per_day > 0n && total + input.amount > capacity.max_payout_amount_per_day) return this.createLockedWithdrawal(tx, input, wallet, available, 'PENDING_CAPACITY', risk.score);
@@ -69,7 +69,7 @@ export class WalletWithdrawalService {
     return { max_wd_users_per_day: number('max_wd_users_per_day'), max_wd_transactions_per_day: number('max_wd_transactions_per_day'), max_payout_amount_per_day: amount('max_payout_amount_per_day'), max_wd_per_user_per_day: number('max_wd_per_user_per_day'), max_wd_amount_per_user_per_day: amount('max_wd_amount_per_user_per_day'), reset_time: typeof object.reset_time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(object.reset_time as string) ? object.reset_time as string : '00:00', enable_daily_limit: object.enable_daily_limit === true };
   }
 }
-function dailyWindow(resetTime: string): { start: Date; end: Date } { const [hour, minute] = resetTime.split(':').map(Number); const now = new Date(); const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now); const [year, month, day] = date.split('-').map(Number); const start = new Date(Date.UTC(year, month - 1, day, hour - 7, minute)); if (start.getTime() > now.getTime()) start.setUTCDate(start.getUTCDate() - 1); const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); return { start, end }; }
+function dailyWindow(resetTime: string): { start: Date; end: Date } { const parts = resetTime.split(':').map(Number); const hour = parts[0] ?? 0; const minute = parts[1] ?? 0; const now = new Date(); const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now); const dateParts = date.split('-').map(Number); const year = dateParts[0] ?? now.getUTCFullYear(); const month = dateParts[1] ?? now.getUTCMonth() + 1; const day = dateParts[2] ?? now.getUTCDate(); const start = new Date(Date.UTC(year, month - 1, day, hour - 7, minute)); if (start.getTime() > now.getTime()) start.setUTCDate(start.getUTCDate() - 1); const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); return { start, end }; }
 function sumAmounts(rows: Array<{ amount: DecimalLike }>): bigint { return rows.reduce((sum, row) => sum + BigInt(row.amount.toFixed(0)), 0n); }
 function error(statusCode: number, code: string, message: string): Error & { statusCode: number; code: string } { const e = new Error(message) as Error & { statusCode: number; code: string }; e.statusCode = statusCode; e.code = code; return e; }
 export { COINS_PER_IDR, MIN_WITHDRAWAL_IDR };
