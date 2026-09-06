@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: Rewzio API
+  version: 0.1.0
+  description: Canonical API contract shared by Android, Admin and backend integrations.
+servers:
+  - url: /
+tags:
+  - {name: auth}
+  - {name: user}
+  - {name: rewards}
+  - {name: missions}
+  - {name: watch}
+  - {name: ads}
+  - {name: survey}
+  - {name: offerwall}
+  - {name: referral}
+  - {name: lucky}
+  - {name: spin}
+  - {name: quiz}
+  - {name: game}
+  - {name: wallet}
+  - {name: withdrawal}
+  - {name: support}
+  - {name: notifications}
+  - {name: admin}
+  - {name: webhook}
+  - {name: payout}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    ApiSuccess:
+      type: object
+      required: [success, data, message]
+      properties:
+        success: {type: boolean, enum: [true]}
+        data: {}
+        message: {type: [string, 'null']}
+    ApiError:
+      type: object
+      required: [success, error]
+      properties:
+        success: {type: boolean, enum: [false]}
+        error: {$ref: '#/components/schemas/ErrorBody'}
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+    ErrorCodes:
+      type: string
+      enum: [BAD_REQUEST, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, VALIDATION_ERROR, RATE_LIMITED, APP_NOT_AUTHORIZED, INVALID_IDEMPOTENCY_KEY, INVALID_WITHDRAWAL, INVALID_WITHDRAWAL_AMOUNT, INSUFFICIENT_BALANCE, WITHDRAWAL_METHOD_NOT_FOUND, WITHDRAWAL_CAPACITY_FULL, FRAUD_REVIEW_REQUIRED, FRAUD_REJECTED, INVALID_WATCH_SESSION, INVALID_HEARTBEAT, INVALID_COMPLETION, REPLAY_DETECTED, WEBHOOK_APP_REQUIRED, INVALID_SIGNATURE, PROVIDER_TIMEOUT, PROVIDER_ERROR, PAYOUT_NOT_FOUND, PAYOUT_CONFLICT, QUIZ_NOT_FOUND, SUPPORT_TICKET_NOT_FOUND, ATTACHMENT_INVALID, INTERNAL_ERROR]
+paths:
+  /api/v1/auth/request-otp: {post: {tags: [auth], summary: Request OTP, requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/auth/verify-otp: {post: {tags: [auth], summary: Verify OTP, requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/auth/google: {post: {tags: [auth], summary: Google login, requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/auth/refresh: {post: {tags: [auth], summary: Refresh token, requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/auth/logout: {post: {tags: [auth], summary: Logout, requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/user/me: {get: {tags: [user], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}, patch: {tags: [user], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/user/devices: {get: {tags: [user], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}, post: {tags: [user], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/user/devices/{id}: {delete: {tags: [user], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/user/sessions: {get: {tags: [user], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/user/sessions/{id}: {delete: {tags: [user], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/user/account: {delete: {tags: [user], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/rewards: {get: {tags: [rewards], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/missions: {get: {tags: [missions], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/missions/{id}: {get: {tags: [missions], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/missions/{id}/start: {post: {tags: [missions], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/missions/{id}/complete: {post: {tags: [missions], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/rewards/claim: {post: {tags: [rewards], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/watch: {get: {tags: [watch], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/watch/session: {post: {tags: [watch], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/watch/heartbeat: {post: {tags: [watch], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/watch/complete: {post: {tags: [watch], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/ads: {get: {tags: [ads], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/ads/callback: {post: {tags: [webhook], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/survey: {get: {tags: [survey], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/survey/callback: {post: {tags: [webhook], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/offerwall: {get: {tags: [offerwall], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/offerwall/callback: {post: {tags: [webhook], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/referral/apply: {post: {tags: [referral], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/referral/{id}/qualify: {post: {tags: [referral], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/lucky/play: {post: {tags: [lucky], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/spin/play: {post: {tags: [spin], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/game/play: {post: {tags: [game], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/quiz: {get: {tags: [quiz], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/quiz/{id}: {get: {tags: [quiz], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/quiz/{id}/complete: {post: {tags: [quiz], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/wallet: {get: {tags: [wallet], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/withdrawals: {get: {tags: [withdrawal], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}, post: {tags: [withdrawal], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/withdrawals/{id}: {get: {tags: [withdrawal], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/withdrawals/history: {get: {tags: [withdrawal], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/payouts/{withdrawalId}: {get: {tags: [payout], security: [{bearerAuth: []}], parameters: [{name: withdrawalId, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/payouts/{withdrawalId}/process: {post: {tags: [payout], security: [{bearerAuth: []}], parameters: [{name: withdrawalId, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/payouts/reconciliation: {get: {tags: [payout], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/webhooks/payout/{provider}: {post: {tags: [webhook], parameters: [{name: provider, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/notifications: {get: {tags: [notifications], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/notifications/{id}/read: {post: {tags: [notifications], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/notifications/preferences: {get: {tags: [notifications], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}, put: {tags: [notifications], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/support/categories: {get: {tags: [support], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}}
+  /api/v1/support/tickets: {get: {tags: [support], security: [{bearerAuth: []}], responses: {'200': {description: Success}}}, post: {tags: [support], security: [{bearerAuth: []}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/support/tickets/{id}: {get: {tags: [support], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Success}}}}
+  /api/v1/support/tickets/{id}/reply: {post: {tags: [support], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/support/tickets/{id}/attachments: {post: {tags: [support], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
+  /api/v1/support/admin/tickets/{id}/action: {post: {tags: [admin], security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], requestBody: {$ref: '#/components/schemas/RequestBody'}, responses: {'200': {description: Success}}}}
