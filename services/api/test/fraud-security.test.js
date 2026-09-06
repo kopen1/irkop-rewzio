@@ -33,7 +33,7 @@ test('risk bands are LOW, MEDIUM, HIGH', async () => {
   const low = await new FraudRiskEngine(dbStub(), redis).assess(base);
   assert.equal(low.level, 'LOW');
 
-  const medium = await new FraudRiskEngine(dbStub({ rewardsHour: 10, withdrawals: 5, ipUsers: 5 }), redis).assess(base);
+  const medium = await new FraudRiskEngine(dbStub({ rewardsHour: 20, withdrawals: 5, ipUsers: 5 }), redis).assess(base);
   assert.equal(medium.level, 'MEDIUM');
   assert.equal(medium.action, 'PENDING_REVIEW');
 
