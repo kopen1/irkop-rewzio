@@ -1,3 +1,4 @@
+# Reproducible Android Debug APK verification: Gradle Wrapper + Java 17 + SDK 35.
 name: Android Debug APK
 on:
   push:
