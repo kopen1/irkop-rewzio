@@ -41,8 +41,6 @@ jobs:
       TEST_DATABASE_URL: postgresql://rewzio_test:rewzio_test@127.0.0.1:5432/rewzio_test
       REDIS_URL: redis://127.0.0.1:6379
       TEST_REDIS_URL: redis://127.0.0.1:6379
-      JWT_ACCESS_SECRET: ci-only-jwt-secret-012345678901234567890
-      OTP_SECRET: ci-only-otp-secret-012345678901234567890
       GOOGLE_CLIENT_ID: ci-test-client.apps.googleusercontent.com
       APP_NAME: rewzio-ci
       PORT: 3001
@@ -53,6 +51,10 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Generate ephemeral CI secrets
+        run: |
+          echo "JWT_ACCESS_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "OTP_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - name: Install
         run: npm ci
       - name: Lint
