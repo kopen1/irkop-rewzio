@@ -1,0 +1,18 @@
+name = "rewzio-api"
+main = "../../services/api/src/worker.ts"
+compatibility_date = "2026-09-07"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+REWZIO_DATABASE_NAME = "rewzio"
+
+# Cloudflare resources are intentionally bound only after the D1/DO/Queues
+# migration is implemented and the production resource IDs are provisioned.
+# This keeps master and the migration branch deploy-safe while the runtime
+# is being converted from Fastify/PostgreSQL/Redis to Workers/D1/DO/Queues.
+
+[env.staging]
+name = "rewzio-api-staging"
+
+[env.production]
+name = "rewzio-api"
