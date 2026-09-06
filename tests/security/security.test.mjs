@@ -9,11 +9,12 @@ const wallet = read('services/api/src/modules/wallet/service.ts');
 const payout = read('services/api/src/modules/payout/service.ts');
 const fraud = read('services/api/src/modules/fraud/service.ts');
 const admin = read('apps/admin/src/lib/rbac.ts');
+const routes = read('services/api/src/routes/rewards.ts') + read('services/api/src/routes/watch.ts') + read('services/api/src/routes/wallet.ts');
 
 const securityCases = {
   IDOR: [/session\.userId !== claims\.sub/, /session\.appId !== claims\.appId/],
   authentication_bypass: [/Bearer /, /verifyAccessToken/, /SESSION_INVALID/],
-  authorization_bypass: [/APP_NOT_AUTHORIZED/, /role === "STAFF"/],
+  authorization_bypass: [/APP_NOT_AUTHORIZED/, /ADMIN_ONLY/],
   replay: [/REWARD_ALREADY_PROCESSED/, /idempotencyKey/],
   duplicate_reward: [/rewardRedemptions\.findUnique/, /Serializable/],
   fake_reward_amount: [/reward\.amount/, /clientAmountIgnored/],
@@ -29,7 +30,7 @@ const securityCases = {
 
 test('critical security invariants are enforced', () => {
   for (const [name, patterns] of Object.entries(securityCases)) {
-    const corpus = name.includes('withdrawal') || name.includes('financial') ? `${wallet}\n${payout}` : name.includes('reward') || name === 'replay' ? `${reward}\n${wallet}` : name.includes('authorization') || name.includes('privilege') || name === 'IDOR' ? `${auth}\n${admin}\n${wallet}` : name.includes('webhook') ? payout : name.includes('brute') || name.includes('authentication') || name.includes('rate') ? `${auth}\n${reward}` : `${auth}\n${reward}\n${fraud}\n${payout}`;
+    const corpus = name.includes('withdrawal') || name.includes('financial') ? `${wallet}\n${payout}` : name.includes('reward') || name === 'replay' ? `${reward}\n${wallet}` : name.includes('authorization') || name.includes('privilege') ? `${auth}\n${admin}\n${routes}` : name === 'IDOR' ? `${auth}\n${routes}\n${wallet}` : name.includes('webhook') ? payout : name.includes('brute') || name.includes('authentication') || name.includes('rate') ? `${auth}\n${reward}` : `${auth}\n${reward}\n${fraud}\n${payout}`;
     for (const pattern of patterns) assert.match(corpus, pattern, `${name} invariant missing: ${pattern}`);
   }
 });
