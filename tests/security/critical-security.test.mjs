@@ -36,10 +36,10 @@ test('webhook replay, duplicate payout, invalid signature and failed/refund path
 
 test('brute force, rate-limit bypass and malicious payload controls exist', () => {
   const auth = read('services/api/src/modules/auth/service.ts');
-  const rate = read('services/api/src/middleware/rate-limit.ts');
-  assert.match(auth, /attempt/i); assert.match(auth, /5/); assert.match(rate, /rate/i);
-  const security = `${auth}\n${rate}`;
-  assert.match(security, /limit|window|TTL/i);
+  const fraud = read('services/api/src/modules/fraud/service.ts');
+  assert.match(auth, /OTP_MAX_ATTEMPTS=5/); assert.match(auth, /Too many verification attempts/); assert.match(auth, /incrementWithExpiry/);
+  assert.match(auth, /auth:otp:ip/); assert.match(auth, /auth:otp:phone/); assert.match(auth, /auth:verify:ip/);
+  assert.match(fraud, /redactMetadata/);
 });
 
 test('SQL injection resistance uses Prisma/raw SQL only for controlled locking operations', () => {
