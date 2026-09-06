@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { openapiDocument } from '@rewzio/api-contract';
@@ -20,7 +21,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { RedisConnection } from './core/redis.js';
 export interface AppDependencies { db: PrismaClient; redis: RedisConnection; }
 export function buildApp(config: AppConfig, dependencies: AppDependencies): FastifyInstance {
-  const app = Fastify({ logger: { level: config.logLevel, base: { service: config.appName }, serializers: { req(request) { return { id: request.id, method: request.method, url: request.url }; }, res(reply) { return { statusCode: reply.statusCode }; } } }, requestIdHeader: 'x-request-id', genReqId: () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` });
+  const app = Fastify({ logger: { level: config.logLevel, base: { service: config.appName }, serializers: { req(request) { return { id: request.id, method: request.method, url: request.url }; }, res(reply) { return { statusCode: reply.statusCode }; } } }, requestIdHeader: 'x-request-id', genReqId: () => randomUUID() });
   const swaggerOptions = { openapi: openapiDocument as any };
   app.register(swagger, swaggerOptions);
   app.register(swaggerUi, { routePrefix: '/api/docs' });
