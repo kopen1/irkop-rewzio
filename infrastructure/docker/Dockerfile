@@ -1,6 +1,7 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
+COPY apps/admin/package.json apps/admin/package.json
 COPY services/api/package.json services/api/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/api-contract/package.json packages/api-contract/package.json
