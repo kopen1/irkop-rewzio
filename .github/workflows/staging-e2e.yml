@@ -78,7 +78,7 @@ jobs:
           const prisma = new PrismaClient();
           const app = await prisma.apps.findUnique({ where: { slug: 'rewzio-staging' } });
           if (!app || app.environment !== 'STAGING') throw new Error('staging app/environment check failed');
-          const settings = await prisma.appSettings.findMany({ where: { appId: app.id, key: { in: ['is_demo', 'social_proof_is_demo', 'payout_mode'] } });
+          const settings = await prisma.appSettings.findMany({ where: { appId: app.id, key: { in: ['is_demo', 'social_proof_is_demo', 'payout_mode'] } } });
           const map = Object.fromEntries(settings.map((item) => [item.key, item.value]));
           if (map.is_demo !== true || map.social_proof_is_demo !== true || map.payout_mode !== 'MOCK') throw new Error('staging demo/payout flags are incorrect');
           console.log('STAGING CONFIG PASS');
