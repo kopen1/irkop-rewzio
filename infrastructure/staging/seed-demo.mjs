@@ -1,5 +1,7 @@
-import { PrismaClient, AppStatus, Environment, FeatureMode, RewardStatus, ContentStatus } from '@prisma/client';
+import { createRequire } from 'node:module';
 
+const require = createRequire(new URL('../../services/api/package.json', import.meta.url));
+const { PrismaClient, AppStatus, Environment, FeatureMode, RewardStatus, ContentStatus } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
