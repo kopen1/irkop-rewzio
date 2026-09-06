@@ -4,8 +4,8 @@ import fs from 'node:fs';
 
 const files = [
   'services/api/src/routes/auth.ts','services/api/src/routes/rewards.ts','services/api/src/routes/watch.ts',
-  'services/api/src/routes/rewards.ts','services/api/src/routes/engagement-rewards.ts','services/api/src/routes/wallet.ts',
-  'services/api/src/routes/payout.ts','services/api/src/routes/notifications-support.ts'
+  'services/api/src/routes/engagement-rewards.ts','services/api/src/routes/wallet.ts','services/api/src/routes/payout.ts',
+  'services/api/src/routes/notifications-support.ts','services/api/src/modules/payout/service.ts'
 ];
 const source = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 const flow = ['Register','Login','Earn','Watch','Mission','Referral','Wallet','Withdrawal','Admin Review','Payout','Webhook','Completed'];
