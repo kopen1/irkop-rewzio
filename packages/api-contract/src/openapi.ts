@@ -79,7 +79,7 @@ function body(required: string[]) {
     installationId:{type:'string'}, platform:{type:'string'}, appVersion:{type:'string'}, confirmation:{type:'string'},
     idempotencyKey:{type:'string',minLength:8,maxLength:255}, contentId:{type:'string'}, deviceId:{type:'string'}, watchSessionId:{type:'string'},
     positionSeconds:{type:'integer',minimum:0}, evidence:{type:'object',additionalProperties:true}, sessionId:{type:'string'},
-    answers:{type:'array',items:{type:'string'}}, code:{type:'string'}, methodId:{type:'string'}, amount:{oneOf:[{type:'string',pattern:'^\\d+$'},{type:'integer',minimum:1}]},
+    answers:{type:'array',items:{type:'string'}}, methodId:{type:'string'}, amount:{oneOf:[{type:'string',pattern:'^\\d+$'},{type:'integer',minimum:1}]},
     categoryId:{type:'string'}, subject:{type:'string'}, body:{type:'string'}, priority:{type:'string',enum:['LOW','NORMAL','HIGH','URGENT']},
     fileName:{type:'string'}, mimeType:{type:'string'}, sizeBytes:{type:'integer',minimum:0}, fileUrl:{type:'string',format:'uri'}, action:{type:'string'}, adminUserId:{type:'string'}
   };
