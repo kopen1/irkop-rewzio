@@ -60,16 +60,8 @@ jobs:
         run: npm --workspace @rewzio/shared run build
       - name: Build API contract prerequisite
         run: npm --workspace @rewzio/api-contract run build
-      - name: Prepare Prisma test database
-        run: npm --workspace @rewzio/api run db:migrate:deploy
-      - name: Generate Prisma client
-        run: npm --workspace @rewzio/api run db:generate
+      - name: Prepare isolated Prisma test database
+        run: npx --workspace @rewzio/api prisma db push --skip-generate
       - run: npm run typecheck
       - run: npm run build
-      - name: Start API for black-box tests
-        run: |
-          nohup node services/api/dist/server.js > /tmp/rewzio-api.log 2>&1 &
-          for i in {1..30}; do curl -fsS http://127.0.0.1:3001/health && exit 0; sleep 1; done
-          cat /tmp/rewzio-api.log
-          exit 1
       - run: npm test
