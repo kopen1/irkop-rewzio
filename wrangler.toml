@@ -1,0 +1,62 @@
+name = "rewzio-api"
+main = "services/api/src/worker.ts"
+compatibility_date = "2026-09-07"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+REWZIO_DATABASE_NAME = "rewzio"
+ENVIRONMENT = "staging"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rewzio-staging"
+database_id = "__SET_WITH_WRANGLER__"
+migrations_dir = "infrastructure/cloudflare/d1/migrations"
+
+[[durable_objects.bindings]]
+name = "ECONOMIC_COORDINATOR"
+class_name = "EconomicCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EconomicCoordinator"]
+
+[[queues.producers]]
+binding = "PAYOUT_QUEUE"
+queue = "rewzio-payout-staging"
+
+[[queues.consumers]]
+queue = "rewzio-payout-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+
+[env.production]
+name = "rewzio-api"
+[env.production.vars]
+REWZIO_DATABASE_NAME = "rewzio"
+ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "rewzio"
+database_id = "__SET_WITH_WRANGLER__"
+migrations_dir = "infrastructure/cloudflare/d1/migrations"
+
+[[env.production.durable_objects.bindings]]
+name = "ECONOMIC_COORDINATOR"
+class_name = "EconomicCoordinator"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["EconomicCoordinator"]
+
+[[env.production.queues.producers]]
+binding = "PAYOUT_QUEUE"
+queue = "rewzio-payout"
+
+[[env.production.queues.consumers]]
+queue = "rewzio-payout"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
