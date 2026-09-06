@@ -5,14 +5,16 @@ import { RewardEngine } from '../dist/modules/rewards/engine.js';
 class FakeRedis { constructor(){this.count=0;} async incrementWithExpiry(){return ++this.count;} }
 function makeDb(){
   const state={
-    user:{id:'u1',status:'ACTIVE'}, session:{id:'s1',userId:'u1',appId:'app1',deviceId:'d1',status:'ACTIVE',expiresAt:new Date(Date.now()+60000)},
+    user:{id:'u1',status:'ACTIVE'}, session:{id:'s1',userId:'u1',appId:'app1',deviceId:'d1',status:'ACTIVE',expiresAt:new Date(Date.now()+60000),ipAddress:'10.0.0.1'},
     userApp:{appId:'app1',userId:'u1',status:'ACTIVE'}, device:{id:'d1',appId:'app1',userId:'u1',status:'ACTIVE',integrityStatus:'VERIFIED',riskScore:0},
     reward:{id:'rw1',appId:'app1',sourceType:'ads',sourceId:'ad1',amount:50n,status:'CONFIRMED',createdAt:new Date()}, redemption:null, account:{id:'ca1',appId:'app1',userId:'u1',balance:0n,version:0n}, ledger:[],
   };
   const api={
-    users:{findUnique:async()=>state.user}, userSessions:{findUnique:async()=>state.session}, userApps:{findUnique:async()=>state.userApp}, userDevices:{findUnique:async()=>state.device},
+    users:{findUnique:async()=>state.user}, userSessions:{findUnique:async()=>state.session,count:async()=>1,findMany:async()=>[{userId:'u1'}]}, userApps:{findUnique:async()=>state.userApp}, userDevices:{findUnique:async()=>state.device},
     rewards:{findFirst:async()=>state.reward},
-    rewardRedemptions:{findUnique:async({where})=>where.idempotencyKey===state.redemption?.idempotencyKey?state.redemption:null,create:async({data})=>{state.redemption={id:`red-${state.ledger.length+1}`,...data};return state.redemption;},update:async({where,data})=>{Object.assign(state.redemption,data);return state.redemption;}},
+    rewardRedemptions:{findUnique:async({where})=>where.idempotencyKey===state.redemption?.idempotencyKey?state.redemption:null,create:async({data})=>{state.redemption={id:`red-${state.ledger.length+1}`,...data};return state.redemption;},update:async({where,data})=>{Object.assign(state.redemption,data);return state.redemption;},count:async()=>0,findMany:async()=>[]},
+    withdrawals:{count:async()=>0}, referrals:{findMany:async()=>[]}, deviceRelationships:{count:async()=>0,upsert:async()=>({})},
+    fraudScores:{create:async({data})=>({id:'fs1',...data})}, fraudEvents:{create:async({data})=>({id:'fe1',...data})}, riskSignals:{createMany:async({data})=>({count:data.length})}, securityActions:{create:async({data})=>({id:'sa1',...data})}, rewardHolds:{create:async({data})=>({id:'rh1',...data})},
     coinAccounts:{findUnique:async()=>state.account,upsert:async({create})=>state.account??=create,update:async({data})=>{Object.assign(state.account,data);return state.account;}},
     coinLedger:{findUnique:async({where})=>state.ledger.find(x=>x.idempotencyKey===where.appId_idempotencyKey.idempotencyKey)??null,findFirst:async({where})=>state.ledger.find(x=>x.appId===where.appId&&x.referenceId===where.referenceId)??null,create:async({data})=>{const x={id:`led-${state.ledger.length+1}`,...data};state.ledger.push(x);return x;}},
     $queryRaw:async()=>[{id:state.account.id,balance:state.account.balance,version:state.account.version}],
