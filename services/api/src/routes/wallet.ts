@@ -23,16 +23,11 @@ export function registerWalletRoutes(app: FastifyInstance, config: AppConfig, db
       const body = request.body ?? {};
       if (!body.methodId || body.amount === undefined || !body.idempotencyKey) throw bad(400, 'INVALID_WITHDRAWAL', 'methodId, amount and idempotencyKey are required');
       const amount = parseWholeAmount(body.amount);
-      return ok(await service.requestWithdrawal({ appId: claims.appId, userId: claims.sub, sessionId: claims.sid, methodId: body.methodId, amount, idempotencyKey: body.idempotencyKey, deviceId: body.deviceId, ipAddress: request.ip }), 'Withdrawal request accepted');
+      const input: { appId: string; userId: string; sessionId: string; methodId: string; amount: bigint; idempotencyKey: string; ipAddress: string; deviceId?: string } = { appId: claims.appId, userId: claims.sub, sessionId: claims.sid, methodId: body.methodId, amount, idempotencyKey: body.idempotencyKey, ipAddress: request.ip };
+      if (body.deviceId !== undefined) input.deviceId = body.deviceId;
+      return ok(await service.requestWithdrawal(input), 'Withdrawal request accepted');
     });
   }, { prefix: '/api/v1' });
 }
-
-function parseWholeAmount(value: string | number): bigint {
-  const text = typeof value === 'number' ? String(value) : value.trim();
-  if (!/^\d+$/.test(text)) throw bad(400, 'INVALID_WITHDRAWAL_AMOUNT', 'amount must be a positive whole IDR amount');
-  const amount = BigInt(text);
-  if (amount <= 0n) throw bad(400, 'INVALID_WITHDRAWAL_AMOUNT', 'amount must be a positive whole IDR amount');
-  return amount;
-}
+function parseWholeAmount(value: string | number): bigint { const text = typeof value === 'number' ? String(value) : value.trim(); if (!/^\d+$/.test(text)) throw bad(400, 'INVALID_WITHDRAWAL_AMOUNT', 'amount must be a positive whole IDR amount'); const amount = BigInt(text); if (amount <= 0n) throw bad(400, 'INVALID_WITHDRAWAL_AMOUNT', 'amount must be a positive whole IDR amount'); return amount; }
 function bad(statusCode: number, code: string, message: string): Error & { statusCode: number; code: string } { const e = new Error(message) as Error & { statusCode: number; code: string }; e.statusCode = statusCode; e.code = code; return e; }
