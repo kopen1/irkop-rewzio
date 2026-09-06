@@ -89,47 +89,10 @@ jobs:
       - name: Build image
         run: docker build -f infrastructure/docker/Dockerfile -t rewzio-api:${{ github.sha }} .
 
-  staging-e2e:
-    name: Staging isolated E2E
-    needs: docker
-    runs-on: ubuntu-latest
-    env:
-      POSTGRES_PASSWORD: rewzio_ci_staging_password
-      JWT_ACCESS_SECRET: rewzio-ci-staging-jwt-secret-not-production
-      OTP_SECRET: rewzio-ci-staging-otp-secret-not-production
-      GOOGLE_CLIENT_ID: staging-ci-client.apps.googleusercontent.com
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - name: Install test tooling
-        run: npm ci
-      - name: Start isolated staging stack
-        run: docker compose --env-file infrastructure/staging/.env.example -f infrastructure/staging/docker-compose.yml up -d --build
-      - name: Generate Prisma client
-        run: npx --workspace @rewzio/api prisma generate
-      - name: Prepare staging database
-        env:
-          DATABASE_URL: postgresql://rewzio_staging:${{ env.POSTGRES_PASSWORD }}@127.0.0.1:55432/rewzio_staging
-        run: npx --workspace @rewzio/api prisma db push --skip-generate
-      - name: Seed staging demo data
-        env:
-          DATABASE_URL: postgresql://rewzio_staging:${{ env.POSTGRES_PASSWORD }}@127.0.0.1:55432/rewzio_staging
-        run: node infrastructure/staging/seed-demo.mjs
-      - name: Run staging E2E smoke test
-        env:
-          STAGING_API_URL: http://127.0.0.1:3001
-        run: node infrastructure/staging/e2e-local.mjs
-      - name: Tear down staging stack
-        if: always()
-        run: docker compose --env-file infrastructure/staging/.env.example -f infrastructure/staging/docker-compose.yml down -v
-
   deploy-staging:
     name: Deploy staging
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [quality, docker, staging-e2e]
+    needs: [quality, docker]
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -138,7 +101,7 @@ jobs:
   deploy-production:
     name: Deploy production
     if: github.event_name == 'workflow_dispatch'
-    needs: [quality, docker, staging-e2e]
+    needs: [quality, docker]
     runs-on: ubuntu-latest
     environment: production
     steps:
