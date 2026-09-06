@@ -24,15 +24,10 @@ export class WalletWithdrawalService {
   private readonly fraud: FraudRiskEngine;
   constructor(private readonly db: PrismaClient, redis: RedisConnection) { this.fraud = new FraudRiskEngine(db, redis); }
 
-  async getWallet(appId: string, userId: string) {
-    return this.db.$transaction(async (tx) => this.syncWalletInTransaction(tx, appId, userId));
-  }
+  async getWallet(appId: string, userId: string) { return this.db.$transaction(async (tx) => this.syncWalletInTransaction(tx, appId, userId)); }
 
   async listWithdrawals(appId: string, userId: string, history = false) {
-    return this.db.withdrawals.findMany({
-      where: history ? { appId, userId } : { appId, userId, status: { in: COUNTED_STATUSES } },
-      orderBy: { createdAt: 'desc' }, take: 100,
-    });
+    return this.db.withdrawals.findMany({ where: history ? { appId, userId } : { appId, userId, status: { in: COUNTED_STATUSES } }, orderBy: { createdAt: 'desc' }, take: 100 });
   }
 
   async getWithdrawal(appId: string, userId: string, id: string) {
