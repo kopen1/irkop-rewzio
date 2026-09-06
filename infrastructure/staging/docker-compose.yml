@@ -4,7 +4,7 @@ services:
       context: ../..
       dockerfile: infrastructure/docker/Dockerfile
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       APP_ENV: staging
       APP_NAME: rewzio-staging
       DATABASE_URL: postgresql://rewzio_staging:${POSTGRES_PASSWORD:?staging postgres password is required}@postgres:5432/rewzio_staging
