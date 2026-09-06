@@ -7,7 +7,7 @@ services:
       NODE_ENV: staging
       APP_ENV: staging
       APP_NAME: rewzio-staging
-      DATABASE_URL: postgresql://rewzio_staging:rewzio_staging@postgres:5432/rewzio_staging
+      DATABASE_URL: postgresql://rewzio_staging:${POSTGRES_PASSWORD:?staging postgres password is required}@postgres:5432/rewzio_staging
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?staging JWT_ACCESS_SECRET is required}
       OTP_SECRET: ${OTP_SECRET:?staging OTP_SECRET is required}
