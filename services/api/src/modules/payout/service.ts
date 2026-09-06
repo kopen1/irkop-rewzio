@@ -68,7 +68,12 @@ export class PayoutService {
     return results;
   }
 
-  async getPayout(appId: string, withdrawalId: string): Promise<unknown> { return this.db.payoutTransactions.findFirst({ where: { appId, withdrawalId }, orderBy: { createdAt: 'desc' } }); }
+  async getPayout(appId: string, userId: string, withdrawalId: string): Promise<unknown> {
+    const withdrawal = await this.db.withdrawals.findFirst({ where: { appId, id: withdrawalId, userId }, select: { id: true } });
+    if (!withdrawal) throw error(404, 'PAYOUT_NOT_FOUND', 'Payout transaction not found');
+    return this.db.payoutTransactions.findFirst({ where: { appId, withdrawalId: withdrawal.id }, orderBy: { createdAt: 'desc' } });
+  }
+
   async listWebhooks(appId: string, limit = 100): Promise<unknown> { return this.db.paymentWebhooks.findMany({ where: { appId }, orderBy: { receivedAt: 'desc' }, take: Math.min(500, Math.max(1, limit)) }); }
 
   private async recordProviderAcceptance(appId: string, payoutId: string, reference: string, status: ProviderPayoutStatus): Promise<unknown> {

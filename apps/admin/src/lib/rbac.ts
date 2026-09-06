@@ -19,7 +19,12 @@ export function can(role: AdminRole, permission: Permission): boolean {
 }
 
 export type Session = { email: string; role: AdminRole; exp: number };
-const secret = () => process.env.ADMIN_SESSION_SECRET || "development-only-change-me";
+function secret(): string {
+  const value = process.env.ADMIN_SESSION_SECRET?.trim();
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") throw new Error("ADMIN_SESSION_SECRET must be configured in production");
+  return "development-only-change-me";
+}
 const sign = (value: string) => createHmac("sha256", secret()).update(value).digest("base64url");
 
 export function encodeSession(session: Session): string {
