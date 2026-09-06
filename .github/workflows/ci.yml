@@ -62,6 +62,8 @@ jobs:
         run: npm --workspace @rewzio/api-contract run build
       - name: Prepare Prisma test database
         run: npm --workspace @rewzio/api run db:migrate:deploy
+      - name: Generate Prisma client
+        run: npm --workspace @rewzio/api run db:generate
       - run: npm run typecheck
       - run: npm run build
       - name: Start API for black-box tests
