@@ -1,6 +1,9 @@
 name: Bootstrap Android Gradle Wrapper
 
 on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/bootstrap-android-wrapper.yml']
   workflow_dispatch:
 
 permissions:
